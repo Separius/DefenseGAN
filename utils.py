@@ -23,13 +23,13 @@ def to(thing: T, device=None) -> T:
     return thing.to(device)
 
 
-def random_latents(num_latents, latent_size, z_distribution='normal'):
+def random_latents(batch_size, z_dim, z_distribution='normal'):
     if z_distribution == 'normal':
-        return torch.randn(num_latents, latent_size)
+        return torch.randn(batch_size, z_dim)
     elif z_distribution == 'censored':
-        return F.relu(torch.randn(num_latents, latent_size))
+        return F.relu(torch.randn(batch_size, z_dim))
     elif z_distribution == 'bernoulli':
-        return torch.bernoulli(get_half(num_latents, latent_size))
+        return torch.bernoulli(get_half(batch_size, z_dim))
     else:
         raise ValueError()
 
