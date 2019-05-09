@@ -3,7 +3,7 @@ from torch import nn
 from torch.nn.utils import spectral_norm
 
 
-# borrowed from https://github.com/pfnet-research/sngan_projection/blob/master/gen_models/resblocks.py
+# translated from https://github.com/pfnet-research/sngan_projection/blob/master/gen_models/resblocks.py
 class ResBlockGenerator(nn.Module):
     def __init__(self, in_channels, out_channels, apply_sn=False):
         super().__init__()
@@ -33,34 +33,7 @@ class ResBlockGenerator(nn.Module):
         return self.model(x) + self.bypass(x)
 
 
-# borrowed from https://github.com/pfnet-research/sngan_projection/blob/master/dis_models/resblocks.py
-class ResBlockDiscriminator(nn.Module):
-    def __init__(self, in_channels, out_channels, apply_sn=False, is_first_layer=False):
-        super().__init__()
-        conv1 = nn.Conv2d(in_channels, in_channels, 3, padding=1)
-        conv2 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
-        bypass_conv = nn.Conv2d(in_channels, out_channels, 1)
-        nn.init.xavier_uniform_(conv1.weight.data, np.sqrt(2))
-        nn.init.xavier_uniform_(conv2.weight.data, np.sqrt(2))
-        nn.init.xavier_uniform_(bypass_conv.weight.data, 1.0)
-        if apply_sn:
-            conv1 = spectral_norm(conv1)
-            conv2 = spectral_norm(conv2)
-            bypass_conv = spectral_norm(bypass_conv)
-
-        self.model = nn.Sequential(
-            nn.Identity() if is_first_layer else nn.ReLU(),
-            conv1,
-            nn.ReLU(),
-            conv2,
-            nn.AvgPool2d(2)
-        )
-        self.bypass = nn.Sequential(bypass_conv, nn.AvgPool2d(2))
-
-    def forward(self, x):
-        return self.model(x) + self.bypass(x)
-
-
+# translated from https://github.com/pfnet-research/sngan_projection/blob/master/gen_models/resnet.py
 class ResNetGenerator(nn.Module):
     def __init__(self, z_dim=100, rgb_channels=1, dim=64, apply_sn=False):
         super().__init__()
@@ -88,6 +61,35 @@ class ResNetGenerator(nn.Module):
         return self.model(self.dense(z).view(z.size(0), -1, 2, 2))
 
 
+# translated from https://github.com/pfnet-research/sngan_projection/blob/master/dis_models/resblocks.py
+class ResBlockDiscriminator(nn.Module):
+    def __init__(self, in_channels, out_channels, apply_sn=False, is_first_layer=False):
+        super().__init__()
+        conv1 = nn.Conv2d(in_channels, in_channels, 3, padding=1)
+        conv2 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
+        bypass_conv = nn.Conv2d(in_channels, out_channels, 1)
+        nn.init.xavier_uniform_(conv1.weight.data, np.sqrt(2))
+        nn.init.xavier_uniform_(conv2.weight.data, np.sqrt(2))
+        nn.init.xavier_uniform_(bypass_conv.weight.data, 1.0)
+        if apply_sn:
+            conv1 = spectral_norm(conv1)
+            conv2 = spectral_norm(conv2)
+            bypass_conv = spectral_norm(bypass_conv)
+
+        self.model = nn.Sequential(
+            nn.Identity() if is_first_layer else nn.ReLU(),
+            conv1,
+            nn.ReLU(),
+            conv2,
+            nn.AvgPool2d(2)
+        )
+        self.bypass = nn.Sequential(bypass_conv, nn.AvgPool2d(2))
+
+    def forward(self, x):
+        return self.model(x) + self.bypass(x)
+
+
+# translated from https://github.com/pfnet-research/sngan_projection/blob/master/dis_models/snresnet.py
 class ResNetDiscriminator(nn.Module):
     def __init__(self, rgb_channels=1, dim=64, apply_sn=False):
         super().__init__()
@@ -108,7 +110,8 @@ class ResNetDiscriminator(nn.Module):
         return self.fc(self.model(x).view(x.size(0), -1))
 
 
-# borrowed from https://github.com/pytorch/examples/blob/master/dcgan/main.py (modified to work on 32x32 images)
+# borrowed from https://github.com/pytorch/examples/blob/master/dcgan/main.py
+# modified to work on 32x32 images and added spectral normalization option
 class DCGenerator(nn.Module):
     def __init__(self, z_dim=100, rgb_channels=1, dim=64, apply_sn=False):
         super().__init__()
@@ -142,7 +145,8 @@ class DCGenerator(nn.Module):
         return self.model(z.view(-1, self.z_dim, 1, 1))
 
 
-# borrowed from https://github.com/pytorch/examples/blob/master/dcgan/main.py (modified to work on 32x32 images)
+# borrowed from https://github.com/pytorch/examples/blob/master/dcgan/main.py
+# modified to work on 32x32 images and added spectral normalization option
 # also removed the batch normalizations as suggested by many papers
 class DCDiscriminator(nn.Module):
     def __init__(self, rgb_channels=1, dim=64, apply_sn=False):

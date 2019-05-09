@@ -1,17 +1,4 @@
 # borrowed from https://github.com/ajbrock/BigGAN-PyTorch/blob/master/inception_utils.py
-''' Inception utilities
-    This file contains methods for calculating IS and FID, using either
-    the original numpy code or an accelerated fully-pytorch version that
-    uses a fast newton-schulz approximation for the matrix sqrt. There are also
-    methods for acquiring a desired number of samples from the Generator,
-    and parallelizing the inbuilt PyTorch inception network.
-
-    NOTE that Inception Scores and FIDs calculated using these methods will
-    *not* be directly comparable to values calculated using the original TF
-    IS/FID code. You *must* use the TF model if you wish to report and compare
-    numbers. This code tends to produce IS values that are 5-10% lower than
-    those obtained through TF.
-'''
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -19,7 +6,6 @@ import torch.nn as nn
 from scipy import linalg
 import torch.nn.functional as F
 from torchvision import transforms
-from argparse import ArgumentParser
 from torch.nn import Parameter as P
 from torchvision.datasets import MNIST
 from torch.utils.data import DataLoader
@@ -28,16 +14,13 @@ from torchvision.models.inception import inception_v3
 from utils import to
 
 
-# Module that wraps the inception network to enable use with dataparallel and
-# returning pool features and logits.
+# Module that wraps the inception network to return pooled features
 class WrapInception(nn.Module):
     def __init__(self, net):
-        super(WrapInception, self).__init__()
+        super().__init__()
         self.net = net
-        self.mean = P(torch.tensor([0.485, 0.456, 0.406]).view(1, -1, 1, 1),
-                      requires_grad=False)
-        self.std = P(torch.tensor([0.229, 0.224, 0.225]).view(1, -1, 1, 1),
-                     requires_grad=False)
+        self.mean = P(torch.tensor([0.485, 0.456, 0.406]).view(1, -1, 1, 1), requires_grad=False)
+        self.std = P(torch.tensor([0.229, 0.224, 0.225]).view(1, -1, 1, 1), requires_grad=False)
 
     def forward(self, x):
         # Normalize x
@@ -85,16 +68,14 @@ class WrapInception(nn.Module):
         x = self.net.Mixed_7c(x)
         # 8 x 8 x 2048
         pool = torch.mean(x.view(x.size(0), x.size(1), -1), 2)
-        # 1 x 1 x 2048
-        logits = self.net.fc(F.dropout(pool, training=False).view(pool.size(0), -1))
-        # 1000 (num_classes)
-        return pool, logits
+        # 2048
+        return pool
 
 
 # A pytorch implementation of cov, from Modar M. Alfadly
 # https://discuss.pytorch.org/t/covariance-and-gradient-support/16217/2
 def torch_cov(m, rowvar=False):
-    '''Estimate a covariance matrix given data.
+    """Estimate a covariance matrix given data.
 
     Covariance indicates the level to which two variables vary together.
     If we examine N-dimensional samples, `X = [x_1, x_2, ... x_N]^T`,
@@ -112,7 +93,7 @@ def torch_cov(m, rowvar=False):
 
     Returns:
         The covariance matrix of the variables.
-    '''
+    """
     if m.dim() > 2:
         raise ValueError('m has more than 2 dimensions')
     if m.dim() < 2:
@@ -146,8 +127,7 @@ def sqrt_newton_schulz(A, numIters, dtype=None):
     return sA
 
 
-# FID calculator from TTUR--consider replacing this with GPU-accelerated cov
-# calculations using torch?
+# FID calculator from TTUR
 def numpy_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
     """Numpy implementation of the Frechet Distance.
     Taken from https://github.com/bioinf-jku/TTUR
@@ -238,117 +218,66 @@ def torch_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
 
 
 # Loop and run the sampler and the net until it accumulates num_inception_images
-# activations. Return the pool, the logits, and the labels (if one wants
-# Inception Accuracy the labels of the generated class will be needed)
-def accumulate_inception_activations(sample, net, num_inception_images=50000):
+# activations. Return the pooled features
+def accumulate_inception_activations(sample, net, num_inception_images=20000):
     pool = []
     current_count = 0
     while current_count < num_inception_images:
         with torch.no_grad():
-            images, _ = sample()
-            pool_val, _ = net(images.float())
+            pool_val = net(sample())
             pool += [pool_val]
             current_count += pool_val.shape[0]
     return torch.cat(pool, 0)
 
 
 # Load and wrap the Inception model
-def load_inception_net(parallel=False):
-    inception_model = inception_v3(pretrained=True, transform_input=False)
-    inception_model = to(WrapInception(inception_model.eval()))
-    if parallel:
-        print('Parallelizing Inception module...')
-        inception_model = nn.DataParallel(inception_model)
-    return inception_model
+def load_inception_net():
+    return to(WrapInception(inception_v3(pretrained=True, transform_input=False).eval()))
 
 
-# This produces a function which takes in an iterator which returns a set number of samples
-# and iterates until it accumulates config['num_inception_images'] images.
-# The iterator can return samples with a different batch size than used in
-# training, using the setting confg['inception_batchsize']
-def prepare_inception_metrics(parallel, no_fid=False):
+# This produces a function which takes in an iterator which returns a set
+# number of samples and iterates until it accumulates 20000 images.
+def prepare_inception_metrics():
     # Load metrics; this is intentionally not in a try-except loop so that
     # the script will crash here if it cannot find the Inception moments.
-    # By default, remove the "hdf5" from dataset
     inception_moments = np.load('inception_moments.npz')
     data_mu = inception_moments['mu']
     data_sigma = inception_moments['sigma']
     # Load network
-    net = load_inception_net(parallel)
+    net = load_inception_net()
 
-    def get_inception_metrics(sample, num_inception_images, prints=True, use_torch=True):
-        if prints:
-            print('Gathering activations...')
-        pool, logits, labels = accumulate_inception_activations(sample, net, num_inception_images)
-        if no_fid:
-            FID = 9999.0
+    def get_inception_metrics(sample_fn, num_inception_images=20000, use_torch=True):
+        pool = accumulate_inception_activations(sample_fn, net, num_inception_images)
+        if use_torch:
+            mu, sigma = torch.mean(pool, 0), torch_cov(pool, rowvar=False)
+            FID = torch_calculate_frechet_distance(mu, sigma, to(torch.tensor(data_mu).float()),
+                                                   to(torch.tensor(data_sigma).float()))
+            FID = float(FID.cpu().numpy())
         else:
-            if prints:
-                print('Calculating means and covariances...')
-            if use_torch:
-                mu, sigma = torch.mean(pool, 0), torch_cov(pool, rowvar=False)
-            else:
-                mu, sigma = np.mean(pool.cpu().numpy(), axis=0), np.cov(pool.cpu().numpy(), rowvar=False)
-            if prints:
-                print('Covariances calculated, getting FID...')
-            if use_torch:
-                FID = torch_calculate_frechet_distance(mu, sigma, to(torch.tensor(data_mu).float()),
-                                                       to(torch.tensor(data_sigma).float()))
-                FID = float(FID.cpu().numpy())
-            else:
-                FID = numpy_calculate_frechet_distance(mu.cpu().numpy(), sigma.cpu().numpy(), data_mu, data_sigma)
-        # Delete mu, sigma, pool, logits, and labels, just in case
+            mu, sigma = np.mean(pool.cpu().numpy(), axis=0), np.cov(pool.cpu().numpy(), rowvar=False)
+            FID = numpy_calculate_frechet_distance(mu.cpu().numpy(), sigma.cpu().numpy(), data_mu, data_sigma)
+        # Delete mu, sigma, pool, just in case
         del mu, sigma, pool
         return FID
 
     return get_inception_metrics
 
 
-def prepare_parser():
-    usage = 'Calculate and store inception metrics.'
-    parser = ArgumentParser(description=usage)
-    parser.add_argument(
-        '--batch_size', type=int, default=256,
-        help='Default overall batchsize (default: %(default)s)')
-    parser.add_argument(
-        '--parallel', action='store_true', default=False,
-        help='Train with multiple GPUs (default: %(default)s)')
-    parser.add_argument(
-        '--seed', type=int, default=0,
-        help='Random seed to use.')
-    return parser
-
-
-def run(config):
-    # Get loader
+def main(batch_size=256):
     train_loader = DataLoader(MNIST('~/.torch/data/', train=True, download=True,
                                     transform=transforms.Compose([transforms.ToTensor(),
                                                                   transforms.Normalize((0.1307,),
                                                                                        (0.3081,))])),
-                              batch_size=config['batch_size'], shuffle=True, drop_last=False)
-    # Load inception net
-    net = load_inception_net(parallel=config['parallel'])
+                              batch_size=batch_size, shuffle=True, drop_last=False)
+    net = load_inception_net()
     pool = []
-    for i, (x, y) in enumerate(tqdm(train_loader)):
-        x = to(x)
-        with torch.no_grad():
-            pool_val, logits_val = net(x)
-            pool += [np.asarray(pool_val.cpu())]
+    with torch.no_grad():
+        for i, (x, y) in enumerate(tqdm(train_loader)):
+            pool += [net(to(x)).cpu().numpy()]
     pool = np.concatenate(pool, 0)
-    # Prepare mu and sigma, save to disk. Remove "hdf5" by default
-    # (the FID code also knows to strip "hdf5")
-    print('Calculating means and covariances...')
+    # Prepare mu and sigma, save to disk.
     mu, sigma = np.mean(pool, axis=0), np.cov(pool, rowvar=False)
-    print('Saving calculated means and covariances to disk...')
     np.savez('inception_moments.npz', **{'mu': mu, 'sigma': sigma})
-
-
-def main():
-    # parse command line
-    parser = prepare_parser()
-    config = vars(parser.parse_args())
-    print(config)
-    run(config)
 
 
 if __name__ == '__main__':
