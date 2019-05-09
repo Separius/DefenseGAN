@@ -1,17 +1,16 @@
 # borrowed from https://github.com/ajbrock/BigGAN-PyTorch/blob/master/inception_utils.py
+import os
 import torch
 import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
 from scipy import linalg
 import torch.nn.functional as F
-from torchvision import transforms
 from torch.nn import Parameter as P
-from torchvision.datasets import MNIST
 from torch.utils.data import DataLoader
 from torchvision.models.inception import inception_v3
 
-from utils import to
+from utils import to, get_mnist_ds
 
 
 # Module that wraps the inception network to return pooled features
@@ -235,14 +234,29 @@ def load_inception_net():
     return to(WrapInception(inception_v3(pretrained=True, transform_input=False).eval()))
 
 
+def calc_inception_moments(batch_size=256):
+    train_loader = DataLoader(get_mnist_ds(), batch_size=batch_size, shuffle=True, drop_last=False)
+    net = load_inception_net()
+    pool = []
+    with torch.no_grad():
+        for i, (x, y) in enumerate(tqdm(train_loader)):
+            pool += [net(to(x)).cpu().numpy()]
+    pool = np.concatenate(pool, 0)
+    # Prepare mu and sigma, save to disk.
+    mu, sigma = np.mean(pool, axis=0), np.cov(pool, rowvar=False)
+    np.savez('inception_moments.npz', **{'mu': mu, 'sigma': sigma})
+    return mu, sigma
+
+
 # This produces a function which takes in an iterator which returns a set
 # number of samples and iterates until it accumulates 20000 images.
 def prepare_inception_metrics():
-    # Load metrics; this is intentionally not in a try-except loop so that
-    # the script will crash here if it cannot find the Inception moments.
-    inception_moments = np.load('inception_moments.npz')
-    data_mu = inception_moments['mu']
-    data_sigma = inception_moments['sigma']
+    if not os.path.exists('inception_moments.npz'):
+        data_mu, data_sigma = calc_inception_moments()
+    else:
+        inception_moments = np.load('inception_moments.npz')
+        data_mu = inception_moments['mu']
+        data_sigma = inception_moments['sigma']
     # Load network
     net = load_inception_net()
 
@@ -263,22 +277,5 @@ def prepare_inception_metrics():
     return get_inception_metrics
 
 
-def main(batch_size=256):
-    train_loader = DataLoader(MNIST('~/.torch/data/', train=True, download=True,
-                                    transform=transforms.Compose([transforms.ToTensor(),
-                                                                  transforms.Normalize((0.1307,),
-                                                                                       (0.3081,))])),
-                              batch_size=batch_size, shuffle=True, drop_last=False)
-    net = load_inception_net()
-    pool = []
-    with torch.no_grad():
-        for i, (x, y) in enumerate(tqdm(train_loader)):
-            pool += [net(to(x)).cpu().numpy()]
-    pool = np.concatenate(pool, 0)
-    # Prepare mu and sigma, save to disk.
-    mu, sigma = np.mean(pool, axis=0), np.cov(pool, rowvar=False)
-    np.savez('inception_moments.npz', **{'mu': mu, 'sigma': sigma})
-
-
 if __name__ == '__main__':
-    main()
+    calc_inception_moments()

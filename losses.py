@@ -36,7 +36,6 @@ def calc_grad(x_hat, pred_hat):
 
 
 def generator_loss(dis, gen, real, z, loss_type: str):
-    gen.zero_grad()
     g_ = gen(z)
     d_fake = dis(g_)
     if loss_type in {'hinge', 'wgan_gp'}:
@@ -57,7 +56,6 @@ def generator_loss(dis, gen, real, z, loss_type: str):
 
 def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real, z, loss_type: str,
                        iwass_drift_epsilon: float, grad_lambda: float, iwass_target: float):
-    dis.zero_grad()
     d_real = dis(real)
     with torch.no_grad():
         g_ = gen(z)

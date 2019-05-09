@@ -4,6 +4,8 @@ import numpy as np
 from typing import TypeVar
 from pickle import load, dump
 import torch.nn.functional as F
+from torchvision import transforms
+from torchvision.datasets import MNIST
 
 EPSILON = 1e-8
 _half_tensor = None
@@ -15,7 +17,7 @@ def to(thing: T, device=None) -> T:
     if thing is None:
         return None
     if device is None:
-        device = torch.device('gpu' if torch.cuda.is_available() else 'cpu')
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if isinstance(thing, (list, tuple)):
         return [to(item, device) for item in thing]
     if isinstance(thing, dict):
@@ -37,6 +39,8 @@ def random_latents(batch_size, z_dim, z_distribution='normal'):
         return F.relu(torch.randn(batch_size, z_dim))
     elif z_distribution == 'bernoulli':
         return torch.bernoulli(get_half(batch_size, z_dim))
+    elif z_distribution == 'uniform':
+        return torch.rand(batch_size, z_dim)
     else:
         raise ValueError()
 
@@ -77,3 +81,14 @@ def load_model(model_path, return_all=False):
     if not return_all:
         return state['model']
     return state['model'], state['optimizer']
+
+
+def get_mnist_ds():
+    return MNIST('~/.torch/data/', train=True, download=True,
+                 transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]))
+
+
+def infinite_sampler(loader):
+    while True:
+        for b in loader:
+            yield b

@@ -137,6 +137,7 @@ class DCGenerator(nn.Module):
 
     def get_conv(self, *args, **kwargs):
         conv = nn.ConvTranspose2d(*args, **kwargs, bias=False)
+        nn.init.normal_(conv.weight.data, 0.0, 0.02)
         if self.apply_sn:
             return spectral_norm(conv)
         return conv
@@ -169,6 +170,7 @@ class DCDiscriminator(nn.Module):
 
     def get_conv(self, *args, **kwargs):
         conv = nn.Conv2d(*args, **kwargs, bias=False)
+        nn.init.normal_(conv.weight.data, 0.0, 0.02)
         if self.apply_sn:
             return spectral_norm(conv)
         return conv
