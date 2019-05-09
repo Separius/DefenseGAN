@@ -266,10 +266,10 @@ def prepare_inception_metrics():
             mu, sigma = torch.mean(pool, 0), torch_cov(pool, rowvar=False)
             FID = torch_calculate_frechet_distance(mu, sigma, to(torch.tensor(data_mu).float()),
                                                    to(torch.tensor(data_sigma).float()))
-            FID = float(FID.cpu().numpy())
-        else:
+            FID = FID.cpu().item()
+        if not use_torch or FID != FID:  # nan
             mu, sigma = np.mean(pool.cpu().numpy(), axis=0), np.cov(pool.cpu().numpy(), rowvar=False)
-            FID = numpy_calculate_frechet_distance(mu.cpu().numpy(), sigma.cpu().numpy(), data_mu, data_sigma)
+            FID = numpy_calculate_frechet_distance(mu, sigma, data_mu, data_sigma)
         # Delete mu, sigma, pool, just in case
         del mu, sigma, pool
         return FID

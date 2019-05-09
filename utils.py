@@ -82,8 +82,8 @@ def load_model(model_path):
 
 
 def get_mnist_ds():
-    return MNIST('~/.torch/data/', train=True, download=True,
-                 transform=transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]))
+    return MNIST('~/.torch/data/', train=True, download=True, transform=transforms.Compose(
+        [transforms.Resize((64, 64)), transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]))
 
 
 def infinite_sampler(loader):

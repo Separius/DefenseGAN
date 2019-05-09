@@ -11,7 +11,7 @@ mixing_factors = None
 def get_mixing_factor(x):
     global mixing_factors
     if mixing_factors is None or x.size(0) != mixing_factors.size(0):
-        mixing_factors = torch.FloatTensor(x.size(0), 1, 1).to(x)
+        mixing_factors = torch.FloatTensor(x.size(0), 1, 1, 1).to(x)
     mixing_factors.uniform_()
     return mixing_factors
 
@@ -40,16 +40,16 @@ def generator_loss(dis, gen, real, z, loss_type: str):
     d_fake = dis(g_)
     if loss_type in {'hinge', 'wgan_gp'}:
         return -d_fake.mean()
+    elif loss_type == 'vanilla':
+        return bce(d_fake, get_one(d_fake))
     with torch.no_grad():
         d_real = dis(real)
     if loss_type == 'rsgan':
         return bce(d_fake - d_real, get_one(d_fake))
     elif loss_type == 'rasgan':
-        return (bce(d_fake - d_real.mean(), get_one(d_fake)) +
-                bce(d_real - d_fake.mean(), get_zero(d_real))) / 2.0
+        return bce(d_fake - d_real.mean(), get_one(d_fake)) + bce(d_real - d_fake.mean(), get_zero(d_real))
     elif loss_type == 'rahinge':
-        return (F.relu(1.0 + (d_real - d_fake.mean())).mean() +
-                F.relu(1.0 - (d_fake - d_real.mean())).mean()) / 2
+        return F.relu(1.0 + (d_real - d_fake.mean())).mean() + F.relu(1.0 - (d_fake - d_real.mean())).mean()
     else:
         raise ValueError('Invalid loss type')
 
@@ -63,15 +63,15 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real, z, loss
     if loss_type == 'hinge':
         d_loss = F.relu(1.0 - d_real).mean() + F.relu(1.0 + d_fake).mean()
     elif loss_type == 'rsgan':
-        d_loss = bce(d_real - d_fake, get_one(d_fake))
+        d_loss = bce(d_real - d_fake, get_one(d_real))
     elif loss_type == 'rasgan':
-        d_loss = (bce(d_real - d_fake.mean(), get_one(d_fake)) +
-                  bce(d_fake - d_real.mean(), get_zero(z))) / 2.0
+        d_loss = bce(d_real - d_fake.mean(), get_one(d_real)) + bce(d_fake - d_real.mean(), get_zero(d_fake))
     elif loss_type == 'rahinge':
-        d_loss = (F.relu(1.0 - (d_real - d_fake.mean())).mean() +
-                  F.relu(1.0 + (d_fake - d_real.mean())).mean()) / 2
+        d_loss = F.relu(1.0 - (d_real - d_fake.mean())).mean() + F.relu(1.0 + (d_fake - d_real.mean())).mean()
     elif loss_type == 'wgan_gp':
         d_loss = d_fake.mean() - d_real.mean() + (d_real ** 2).mean() * iwass_drift_epsilon
+    elif loss_type == 'vanilla':
+        d_loss = bce(d_real, get_one(d_real)) + bce(d_fake, get_zero(d_fake))
     else:
         raise ValueError('Invalid loss type')
     if grad_lambda != 0:

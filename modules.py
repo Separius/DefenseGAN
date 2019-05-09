@@ -107,74 +107,73 @@ class ResNetDiscriminator(nn.Module):
             self.fc = spectral_norm(self.fc)
 
     def forward(self, x):
-        return self.fc(self.model(x).view(x.size(0), -1))
+        return self.fc(self.model(x).view(x.size(0), -1)).squeeze(dim=1)
 
 
-# borrowed from https://github.com/pytorch/examples/blob/master/dcgan/main.py
-# modified to work on 32x32 images and added spectral normalization option
+def dcgan_weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
+    elif classname.find('BatchNorm') != -1:
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+        nn.init.constant_(m.bias.data, 0)
+
+
+# borrowed from https://github.com/pytorch/tutorials/blob/master/beginner_source/dcgan_faces_tutorial.py
 class DCGenerator(nn.Module):
-    def __init__(self, z_dim=100, rgb_channels=1, dim=64, apply_sn=False):
+    def __init__(self, z_dim=100, rgb_channels=1, dim=64):
         super().__init__()
-        self.z_dim = z_dim
-        self.apply_sn = apply_sn
         act = nn.ReLU()
         self.model = nn.Sequential(
-            self.get_conv(z_dim, 8 * dim, 2, stride=1, padding=0),  # 2 * 2
-            nn.BatchNorm2d(8 * dim),
-            act,
-            self.get_conv(8 * dim, 4 * dim, 4, stride=2, padding=1),  # 4 * 4
-            nn.BatchNorm2d(4 * dim),
-            act,
-            self.get_conv(4 * dim, 2 * dim, 4, stride=2, padding=1),  # 8 * 8
-            nn.BatchNorm2d(2 * dim),
-            act,
-            self.get_conv(2 * dim, dim, 4, stride=2, padding=1),  # 16 * 16
+            # input is Z, going into a convolution
+            nn.ConvTranspose2d(z_dim, dim * 8, 4, 1, 0, bias=False),
+            nn.BatchNorm2d(dim * 8),
+            nn.ReLU(),
+            # state size. (ngf*8) x 4 x 4
+            nn.ConvTranspose2d(dim * 8, dim * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(dim * 4),
+            nn.ReLU(),
+            # state size. (ngf*4) x 8 x 8
+            nn.ConvTranspose2d(dim * 4, dim * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(dim * 2),
+            nn.ReLU(),
+            # state size. (ngf*2) x 16 x 16
+            nn.ConvTranspose2d(dim * 2, dim, 4, 2, 1, bias=False),
             nn.BatchNorm2d(dim),
-            act,
-            self.get_conv(dim, rgb_channels, 4, stride=2, padding=1),  # 32 * 32
-            nn.Tanh(),
+            nn.ReLU(),
+            # state size. (ngf) x 32 x 32
+            nn.ConvTranspose2d(dim, rgb_channels, 4, 2, 1, bias=False),
+            nn.Tanh()
+            # state size. (nc) x 64 x 64
         )
 
-    def get_conv(self, *args, **kwargs):
-        conv = nn.ConvTranspose2d(*args, **kwargs, bias=False)
-        nn.init.normal_(conv.weight.data, 0.0, 0.02)
-        if self.apply_sn:
-            return spectral_norm(conv)
-        return conv
-
     def forward(self, z):
-        return self.model(z.view(-1, self.z_dim, 1, 1))
+        return self.model(z.view(z.size(0), -1, 1, 1))
 
 
 # borrowed from https://github.com/pytorch/examples/blob/master/dcgan/main.py
-# modified to work on 32x32 images and added spectral normalization option
-# also removed the batch normalizations as suggested by many papers
 class DCDiscriminator(nn.Module):
-    def __init__(self, rgb_channels=1, dim=64, apply_sn=False):
+    def __init__(self, rgb_channels=1, dim=64):
         super().__init__()
-        self.apply_sn = apply_sn
-        act = nn.LeakyReLU(0.2)
         self.model = nn.Sequential(
-            self.get_conv(rgb_channels, dim, 4, stride=2, padding=1),  # 16 x 16
-            act,
-            self.get_conv(dim, 2 * dim, 4, stride=2, padding=1),  # 8 * 8
-            act,
-            self.get_conv(2 * dim, 4 * dim, 4, stride=2, padding=1),  # 4 * 4
-            act,
-            self.get_conv(4 * dim, 8 * dim, 3, stride=2, padding=1),  # 2 * 2
-            act,
+            # input is (nc) x 64 x 64
+            nn.Conv2d(rgb_channels, dim, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2),
+            # state size. (ndf) x 32 x 32
+            nn.Conv2d(dim, dim * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(dim * 2),
+            nn.LeakyReLU(0.2),
+            # state size. (ndf*2) x 16 x 16
+            nn.Conv2d(dim * 2, dim * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(dim * 4),
+            nn.LeakyReLU(0.2),
+            # state size. (ndf*4) x 8 x 8
+            nn.Conv2d(dim * 4, dim * 8, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(dim * 8),
+            nn.LeakyReLU(0.2),
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(dim * 8, 1, 4, 1, 0, bias=False)
         )
-        self.fc = nn.Linear(2 * 2 * 8 * dim, 1)
-        if self.apply_sn:
-            self.fc = spectral_norm(self.fc)
-
-    def get_conv(self, *args, **kwargs):
-        conv = nn.Conv2d(*args, **kwargs, bias=False)
-        nn.init.normal_(conv.weight.data, 0.0, 0.02)
-        if self.apply_sn:
-            return spectral_norm(conv)
-        return conv
 
     def forward(self, x):
-        h = self.model(x).view(x.size(0), -1)
-        return self.fc(h)
+        return self.model(x).squeeze()
