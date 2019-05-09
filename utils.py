@@ -1,6 +1,7 @@
 import os
 import torch
 import numpy as np
+from copy import deepcopy
 from typing import TypeVar
 from pickle import load, dump
 import torch.nn.functional as F
@@ -76,11 +77,8 @@ def enable_benchmark():
         torch.backends.cudnn.benchmark = True
 
 
-def load_model(model_path, return_all=False):
-    state = torch.load(model_path, map_location='cpu')
-    if not return_all:
-        return state['model']
-    return state['model'], state['optimizer']
+def load_model(model_path):
+    return torch.load(model_path, map_location='cpu')
 
 
 def get_mnist_ds():
@@ -92,3 +90,17 @@ def infinite_sampler(loader):
     while True:
         for b in loader:
             yield b
+
+
+def flatten_params(model):
+    return deepcopy(list(p.data for p in model.parameters()))
+
+
+def load_params(flattened, model):
+    for p, avg_p in zip(model.parameters(), flattened):
+        p.data.copy_(avg_p)
+
+
+def update_flattened(model, flattened, old_weight=0.99):
+    for p, avg_p in zip(model.parameters(), flattened):
+        avg_p.mul_(old_weight).add_((1.0 - old_weight) * p.data)
