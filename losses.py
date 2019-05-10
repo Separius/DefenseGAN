@@ -3,31 +3,32 @@ import torch.nn.functional as F
 from torch.autograd import Variable, grad
 from torch.nn.functional import binary_cross_entropy_with_logits as bce
 
-one = None
-zero = None
-mixing_factors = None
+_one = None
+_zero = None
+_mixing_factors = None
 
 
 def get_mixing_factor(x):
-    global mixing_factors
-    if mixing_factors is None or x.size(0) != mixing_factors.size(0):
-        mixing_factors = torch.FloatTensor(x.size(0), 1, 1, 1).to(x)
-    mixing_factors.uniform_()
-    return mixing_factors
+    global _mixing_factors
+    if _mixing_factors is None or x.size(0) != _mixing_factors.size(0):
+        with torch.no_grad():
+            _mixing_factors = torch.FloatTensor(x.size(0), 1, 1, 1).to(x)
+    _mixing_factors.uniform_()
+    return _mixing_factors
 
 
 def get_one(x):
-    global one
-    if one is None or x.size(0) != one.size(0):
-        one = torch.ones(x.size(0)).to(x)
-    return one
+    global _one
+    if _one is None or x.size(0) != _one.size(0):
+        _one = torch.ones(x.size(0), requires_grad=False).to(x)
+    return _one
 
 
 def get_zero(x):
-    global zero
-    if zero is None or x.size(0) != zero.size(0):
-        zero = torch.zeros(x.size(0)).to(x)
-    return zero
+    global _zero
+    if _zero is None or x.size(0) != _zero.size(0):
+        _zero = torch.zeros(x.size(0), requires_grad=False).to(x)
+    return _zero
 
 
 def calc_grad(x_hat, pred_hat):

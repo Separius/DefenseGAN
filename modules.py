@@ -123,7 +123,6 @@ def dcgan_weights_init(m):
 class DCGenerator(nn.Module):
     def __init__(self, z_dim=100, rgb_channels=1, dim=64):
         super().__init__()
-        act = nn.ReLU()
         self.model = nn.Sequential(
             # input is Z, going into a convolution
             nn.ConvTranspose2d(z_dim, dim * 8, 4, 1, 0, bias=False),
