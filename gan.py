@@ -4,14 +4,14 @@ import matplotlib.pyplot as plt
 from torch.optim import Adam, SGD
 import torchvision.utils as vutils
 from argparse import ArgumentParser
-from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 from fid import prepare_inception_metrics
 from losses import discriminator_loss, generator_loss
-from utils import (to, num_params, trainable_params, get_mnist_ds, enable_benchmark,
-                   infinite_sampler, random_latents, flatten_params, update_flattened, load_params)
-from modules import DCGenerator, DCDiscriminator, ResNetGenerator, ResNetDiscriminator, dcgan_weights_init
+from modules import DCGenerator, DCDiscriminator, ResNetGenerator, ResNetDiscriminator
+from utils import (infinite_sampler, random_latents, flatten_params, update_flattened,
+                   to, num_params, trainable_params, get_mnist_ds, setup_run, load_params)
 
 
 def reconstruct(gen, x, args):
@@ -30,20 +30,16 @@ def reconstruct(gen, x, args):
 def train_gan(args):
     if args['verbose']:
         print(args)
-    enable_benchmark()
+    setup_run(args['deterministic'])
     if args['tensorboard']:
         writer = SummaryWriter(args['exp_name'] if args['exp_name'] != '' else None)
-    common_nn_args = dict(rgb_channels=1, dim=args['model_dim'])
+    common_nn_args = dict(rgb_channels=1, dim=args['model_dim'], apply_sn=not args['no_spectral_norm'])
     if args['dcgan']:
         generator, discriminator = DCGenerator, DCDiscriminator
     else:
-        common_nn_args['apply_sn'] = not args['no_spectral_norm']
         generator, discriminator = ResNetGenerator, ResNetDiscriminator
     generator = to(generator(**common_nn_args, z_dim=args['z_dim']))
-    discriminator = to(discriminator(**common_nn_args))
-    if args['dcgan']:
-        generator.apply(dcgan_weights_init)
-        discriminator.apply(dcgan_weights_init)
+    discriminator = to(discriminator(**common_nn_args, apply_bn=args['bn_in_d']))
     if args['verbose']:
         print('generator\'s num params:', num_params(generator))
         print('discriminator\'s num params:', num_params(discriminator))
@@ -53,11 +49,13 @@ def train_gan(args):
     betas = (0.5, 0.999) if args['dcgan'] else (0.0, 0.9)
     g_optim = Adam(trainable_params(generator), lr=lr, betas=betas)
     d_optim = Adam(trainable_params(discriminator), lr=lr * (4 if args['ttur'] else 1), betas=betas)
-    train_loader = DataLoader(get_mnist_ds(), batch_size=args['batch_size'], shuffle=True, drop_last=True)
+    train_loader = DataLoader(get_mnist_ds(64 if args['dcgan'] else 32), batch_size=args['batch_size'],
+                              shuffle=True, drop_last=True)
     train_sampler = iter(infinite_sampler(train_loader))
     if args['moving_average']:
         smoothed_g_params = flatten_params(generator)
-    fid_calculator = prepare_inception_metrics()
+    if not args['no_fid']:
+        fid_calculator = prepare_inception_metrics(64 if args['dcgan'] else 32)
     g_losses = []
     d_losses = []
 
@@ -71,12 +69,13 @@ def train_gan(args):
     fixed_z = get_z()[:8 * 8]
     for idx in range(args['iterations']):
         current_d_losses = []
-        for _ in range(args['d_steps']):
+        for d_step in range(args['d_steps']):
             real, _ = next(train_sampler)
             real = to(real)
             z = get_z()
-            d_loss = discriminator_loss(discriminator, generator, real, z, args['loss'],
-                                        args['iwass_drift_epsilon'], args['grad_lambda'], args['iwass_target'])
+            d_loss, fake = discriminator_loss(discriminator, generator, real, z, args['loss'],
+                                              d_step == (args['d_steps'] - 1), args['iwass_drift_epsilon'],
+                                              args['grad_lambda'], args['iwass_target'])
             d_optim.zero_grad()
             d_loss.backward()
             d_optim.step()
@@ -85,11 +84,12 @@ def train_gan(args):
         if args['tensorboard']:
             writer.add_scalar('discriminator_loss', d_losses[-1], idx)
         current_g_losses = []
-        for _ in range(args['g_steps']):
-            real, _ = next(train_sampler)
-            real = to(real)
-            z = get_z()
-            g_loss = generator_loss(discriminator, generator, real, z, args['loss'])
+        for g_step in range(args['g_steps']):
+            if g_step != 0:
+                real, _ = next(train_sampler)
+                real = to(real)
+                z = get_z()
+            g_loss = generator_loss(discriminator, generator, real, z, args['loss'], g_step == 0, fake)
             g_optim.zero_grad()
             g_loss.backward()
             g_optim.step()
@@ -103,18 +103,20 @@ def train_gan(args):
             if args['moving_average']:
                 original_g_params = flatten_params(generator)
                 load_params(smoothed_g_params, generator)
-            fid = fid_calculator(sample_generator)
-            if args['tensorboard']:
-                writer.add_scalar('FID', fid, idx)
-            if args['verbose']:
-                print(idx, 'fid', fid)
+            if not args['no_fid']:
+                fid = fid_calculator(sample_generator)
+                if args['tensorboard']:
+                    writer.add_scalar('FID', fid, idx)
+                if args['verbose']:
+                    print(idx, 'fid', fid)
             torch.save({'g': generator.state_dict(), 'd': discriminator.state_dict()}, '{}.pth'.format(idx))
             if args['tensorboard']:
-                x, _ = next(train_sampler)
-                x = to(x[:8])
-                x_r, _ = reconstruct(generator, x, args)
-                writer.add_image('Real', vutils.make_grid(x, range=(-1.0, 1.0), nrow=8), idx)
-                writer.add_image('Recon', vutils.make_grid(x_r, range=(-1.0, 1.0), nrow=8), idx)
+                if args['recon_restarts'] != 0:
+                    x, _ = next(train_sampler)
+                    x = to(x[:8])
+                    x_r, _ = reconstruct(generator, x, args)
+                    writer.add_image('Real', vutils.make_grid(x, range=(-1.0, 1.0), nrow=8), idx)
+                    writer.add_image('Recon', vutils.make_grid(x_r, range=(-1.0, 1.0), nrow=8), idx)
                 with torch.no_grad():
                     writer.add_image('Fixed', vutils.make_grid(generator(fixed_z), range=(-1.0, 1.0), nrow=8), idx)
             if args['moving_average']:
@@ -151,6 +153,9 @@ def train_gan(args):
 
 def parse_args(args):
     parser = ArgumentParser()
+    parser.add_argument('--deterministic', action='store_true')
+    parser.add_argument('--bn_in_d', action='store_true')
+    parser.add_argument('--no_fid', action='store_true')
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--dcgan', action='store_true')
     parser.add_argument('--z_dim', default=100, type=int)
@@ -169,7 +174,7 @@ def parse_args(args):
     parser.add_argument('--z_distribution', choices=['normal', 'bernoulli', 'censored', 'uniform'], default='normal')
     parser.add_argument('--iterations', default=5000, type=int)
     parser.add_argument('--eval_freq', default=250, type=int)
-    parser.add_argument('--recon_restarts', default=4, type=int)
+    parser.add_argument('--recon_restarts', default=0, type=int)
     parser.add_argument('--recon_iters', default=200, type=int)
     parser.add_argument('--recon_step_size', default=0.01, type=float)
     parser.add_argument('--moving_average', action='store_true')
@@ -178,5 +183,5 @@ def parse_args(args):
 
 
 if __name__ == '__main__':
-    train_gan(parse_args(
-        args='--verbose --dcgan --no_spectral_norm --iterations 1000 --eval_freq 25 --recon_restarts 4 --tensorboard'.split()))
+    train_gan(parse_args(args='--deterministic --bn_in_d --verbose --dcgan --no_spectral_norm '
+                              '--iterations 2000 --eval_freq 250 --moving_average --tensorboard'.split()))

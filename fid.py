@@ -234,8 +234,8 @@ def load_inception_net():
     return to(WrapInception(inception_v3(pretrained=True, transform_input=False).eval()))
 
 
-def calc_inception_moments(batch_size=256):
-    train_loader = DataLoader(get_mnist_ds(), batch_size=batch_size, shuffle=True, drop_last=False)
+def calc_inception_moments(size, batch_size=256):
+    train_loader = DataLoader(get_mnist_ds(size), batch_size=batch_size, shuffle=True, drop_last=False)
     net = load_inception_net()
     pool = []
     with torch.no_grad():
@@ -244,17 +244,17 @@ def calc_inception_moments(batch_size=256):
     pool = np.concatenate(pool, 0)
     # Prepare mu and sigma, save to disk.
     mu, sigma = np.mean(pool, axis=0), np.cov(pool, rowvar=False)
-    np.savez('inception_moments.npz', **{'mu': mu, 'sigma': sigma})
+    np.savez('inception_moments_{}.npz'.format(size), **{'mu': mu, 'sigma': sigma})
     return mu, sigma
 
 
 # This produces a function which takes in an iterator which returns a set
 # number of samples and iterates until it accumulates 20000 images.
-def prepare_inception_metrics():
-    if not os.path.exists('inception_moments.npz'):
-        data_mu, data_sigma = calc_inception_moments()
+def prepare_inception_metrics(size):
+    if not os.path.exists('inception_moments_{}.npz'.format(size)):
+        data_mu, data_sigma = calc_inception_moments(size)
     else:
-        inception_moments = np.load('inception_moments.npz')
+        inception_moments = np.load('inception_moments_{}.npz'.format(size))
         data_mu = inception_moments['mu']
         data_sigma = inception_moments['sigma']
     # Load network
@@ -278,4 +278,5 @@ def prepare_inception_metrics():
 
 
 if __name__ == '__main__':
-    calc_inception_moments()
+    calc_inception_moments(32)
+    calc_inception_moments(64)

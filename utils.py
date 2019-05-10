@@ -1,5 +1,6 @@
 import os
 import torch
+import random
 import numpy as np
 from copy import deepcopy
 from typing import TypeVar
@@ -72,18 +73,28 @@ def num_params(net):
     return sum([np.prod(p.size()) for p in model_parameters])
 
 
-def enable_benchmark():
-    if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True
+def setup_run(deterministic=False):
+    if deterministic:
+        manual_seed = 999
+        random.seed(manual_seed)
+        torch.manual_seed(manual_seed)
+        np.random.seed(manual_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(manual_seed)
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = True
+    else:
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = True
 
 
 def load_model(model_path):
     return torch.load(model_path, map_location='cpu')
 
 
-def get_mnist_ds():
+def get_mnist_ds(size=64):
     return MNIST('~/.torch/data/', train=True, download=True, transform=transforms.Compose(
-        [transforms.Resize((64, 64)), transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]))
+        [transforms.Resize((size, size)), transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]))
 
 
 def infinite_sampler(loader):

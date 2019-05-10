@@ -36,8 +36,11 @@ def calc_grad(x_hat, pred_hat):
                 create_graph=True, retain_graph=True, only_inputs=True)[0]
 
 
-def generator_loss(dis, gen, real, z, loss_type: str):
-    g_ = gen(z)
+def generator_loss(dis, gen, real, z, loss_type: str, use_fake, given_fake):
+    if use_fake:
+        g_ = given_fake
+    else:
+        g_ = gen(z)
     d_fake = dis(g_)
     if loss_type in {'hinge', 'wgan_gp'}:
         return -d_fake.mean()
@@ -55,12 +58,16 @@ def generator_loss(dis, gen, real, z, loss_type: str):
         raise ValueError('Invalid loss type')
 
 
-def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real, z, loss_type: str,
+def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real, z, loss_type: str, return_fake,
                        iwass_drift_epsilon: float, grad_lambda: float, iwass_target: float):
     d_real = dis(real)
-    with torch.no_grad():
+    if not return_fake:
+        with torch.no_grad():
+            g_ = gen(z)
+        d_fake = dis(g_)
+    else:
         g_ = gen(z)
-    d_fake = dis(g_)
+        d_fake = dis(g_.detach())
     if loss_type == 'hinge':
         d_loss = F.relu(1.0 - d_real).mean() + F.relu(1.0 + d_fake).mean()
     elif loss_type == 'rsgan':
@@ -82,4 +89,4 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real, z, loss
         gp = g.norm(p=2, dim=1) - iwass_target
         gp_loss = (gp ** 2).mean() * grad_lambda / (iwass_target ** 2)
         d_loss = d_loss + gp_loss
-    return d_loss
+    return d_loss, g_
