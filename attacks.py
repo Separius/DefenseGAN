@@ -1,12 +1,13 @@
 import torch
 import numpy as np
+from tqdm import tqdm
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
 
 
-class AdversarialAttack:
+class AdversarialAttack:  # TODO add a save function
     def __init__(self, model):
         self.model = model.eval()
         self.device = torch.device("cuda" if next(model.parameters()).is_cuda else "cpu")
@@ -18,7 +19,7 @@ class AdversarialAttack:
         total = 0
         all_x_adv = []
         all_y = []
-        for x, y in data_loader:
+        for i, (x, y) in enumerate(tqdm(data_loader)):
             all_y.append(y)
             x, y = x.to(self.device), y.to(self.device)
             x_adv = self._attack(x, y)
@@ -39,8 +40,13 @@ class AdversarialAttack:
         raise NotImplementedError()
 
 
+class NoAttack(AdversarialAttack):
+    def _attack(self, x, y):
+        return x
+
+
 class FGSM(AdversarialAttack):
-    def __init__(self, model, eps=0.03):
+    def __init__(self, model, eps=0.3):
         super().__init__(model)
         self.eps = eps
 
@@ -55,7 +61,7 @@ class FGSM(AdversarialAttack):
 
 
 class RandFGSM(FGSM):
-    def __init__(self, model, eps=0.03, alpha=0.01):
+    def __init__(self, model, eps=0.3, alpha=0.05):
         assert eps > alpha
         super().__init__(model, eps - alpha)
         self.alpha = alpha
@@ -117,7 +123,7 @@ class L2Adversary:
     """
 
     def __init__(self, confidence=0.0, c_range=(1e-3, 1e10),
-                 search_steps=5, max_steps=1000, abort_early=True,
+                 search_steps=5, max_steps=500, abort_early=True,
                  box=(-1., 1.), optimizer_lr=1e-2):
         """
         :param confidence: the confidence constant, i.e. the $\\kappa$ in paper
@@ -410,7 +416,7 @@ class L2Adversary:
         optimizer.step()
 
         # Make some records in python/numpy on CPU
-        batch_loss = batch_loss_var.data[0]  # type: float
+        batch_loss = batch_loss_var.item()  # type: float
         pert_norms_np = L2Adversary._var2numpy(perts_norm_var)
         pert_outputs_np = L2Adversary._var2numpy(pert_outputs_var)
         advxs_np = L2Adversary._var2numpy(advxs_var)
@@ -488,3 +494,36 @@ class L2Adversary:
         _box_mul = (box[1] - box[0]) * 0.5
         _box_plus = (box[1] + box[0]) * 0.5
         return torch.tanh(x) * _box_mul + _box_plus
+
+
+def main():
+    from utils import get_mnist_ds
+    import matplotlib.pyplot as plt
+    from modules import CNNClassifier
+    import torchvision.utils as vutils
+
+    classifier = CNNClassifier()
+    classifier.load_state_dict(torch.load('./trained_models/mnist_cnn.pt'))
+    classifier.eval()
+    test_data_loader = torch.utils.data.DataLoader(get_mnist_ds(32, False), batch_size=32, shuffle=True)
+
+    # attacker = NoAttack(classifier)
+    # print('Default.acc', attacker.attack(test_data_loader))
+
+    # attacker = FGSM(classifier, eps=0.3)
+    # print('FGSM.acc', attacker.attack(test_data_loader))
+
+    # attacker = RandFGSM(classifier, eps=0.3, alpha=0.05)
+    # print('RandFGSM.acc', attacker.attack(test_data_loader))
+
+    attacker = CW2(classifier)
+    print('CW2.acc', attacker.attack(test_data_loader))
+
+    plt.imshow(np.transpose(vutils.make_grid(attacker.x[:32], range=(-1.0, 1.0), padding=5), (1, 2, 0)))
+    print(attacker.y[:32])
+    print(classifier(attacker.x[:32]).argmax(dim=1))
+    plt.show()
+
+
+if __name__ == '__main__':
+    main()
