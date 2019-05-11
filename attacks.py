@@ -9,7 +9,7 @@ import torchvision.utils as vutils
 from torch.autograd import Variable
 from torch.utils.data import TensorDataset, DataLoader
 
-from modules import CNNClassifier, FCClassifier
+from modules import CNNClassifier, MLPClassifier
 from utils import get_mnist_ds, mkdir, to, setup_run
 
 
@@ -571,7 +571,7 @@ def main():
 
     test_data_loader = DataLoader(TensorDataset(torch.cat(xs, dim=0), torch.cat(ys, dim=0)), batch_size=32)
     for classifier_name in ['cnn', 'mlp']:
-        classifier = to(CNNClassifier() if classifier_name == 'cnn' else FCClassifier())
+        classifier = to(CNNClassifier() if classifier_name == 'cnn' else MLPClassifier())
         classifier.load_state_dict(torch.load('./trained_models/mnist_' + classifier_name + '.pt'))
         classifier.eval()
         print('*' * 10 + classifier_name + '*' * 10)
@@ -601,7 +601,7 @@ def main():
         # print(classifier(attacker.x[:32]).argmax(dim=1))
         # plt.show()
 
-        for sub_name, sub in zip(('cnn', 'mlp'), (CNNClassifier, FCClassifier)):
+        for sub_name, sub in zip(('cnn', 'mlp'), (CNNClassifier, MLPClassifier)):
             sub = to(sub())
             white_attacker = FGSM(sub, eps=0.3)
             attacker = BlackBoxAttack(classifier, sub, holdout, white_attacker)

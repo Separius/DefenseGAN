@@ -1,20 +1,39 @@
 import math
 import torch
 from torch.optim import SGD
-from modules import DCGenerator, ResNetGenerator
 
 from utils import to, random_latents
+from modules import DCGenerator, ResNetGenerator, CNNAutoEncoder, MLPAutoEncoder
 
 
 class Defence:
-    def defence(self, attacked_data_loader):
-        xs = []
+    def defence(self, model, attacked_data_loader):
+        model = to(model).eval()
+        correct = 0
+        total = 0
         for x, y in attacked_data_loader:
-            xs.append(self._defence(x).cpu())
-        return torch.cat(xs, dim=0)
+            x, y = to(self._defence(x)), to(y)
+            with torch.no_grad():
+                pred = model(x)
+                pred = pred.argmax(dim=1)
+                correct += pred.eq(y).sum().item()
+                total += pred.size(0)
+        return correct / total
 
     def _defence(self, x):
         raise NotImplementedError()
+
+
+class DefAE(Defence):
+    def __init__(self, cnn):
+        model = CNNAutoEncoder if cnn else MLPAutoEncoder
+        model = model()
+        model.load_state_dict(
+            torch.load('./trained_models/mnist_ae_{}.pt'.format('cnn' if cnn else 'mlp'), map_location='cpu'))
+        self.model = to(model).eval()
+
+    def _defence(self, x):
+        return self.model(to(x))
 
 
 class GeneratorConfig:
@@ -63,6 +82,11 @@ class DefGan(Defence):
 class Binarize(Defence):
     def _defence(self, x):
         return (x.sign() + 0.01).sign().float().to(x)  # we don't want the 0 of sign()
+
+
+class NoDefence(Defence):
+    def _defence(self, x):
+        return x
 
 
 # borrowed from https://github.com/BorealisAI/advertorch/blob/master/advertorch/defenses/smoothing.py

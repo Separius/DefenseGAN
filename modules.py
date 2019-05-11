@@ -18,7 +18,7 @@ class ConditionalBatchNorm2d(nn.Module):
 
     def forward(self, x, y):
         out = self.bn(x)
-        if self.embed:
+        if self.embed is None:
             return out
         gamma, beta = self.embed(y).chunk(2, 1)
         out = gamma.view(-1, self.num_features, 1, 1) * out + beta.view(-1, self.num_features, 1, 1)
@@ -238,7 +238,7 @@ class CNNClassifier(nn.Module):
         return self.fc(x.view(x.size(0), -1))
 
 
-class FCClassifier(nn.Module):
+class MLPClassifier(nn.Module):
     def __init__(self):
         super().__init__()
         input_size = 32 * 32
@@ -248,3 +248,43 @@ class FCClassifier(nn.Module):
 
     def forward(self, x):
         return self.fc(x.view(x.size(0), -1))
+
+
+class CNNAutoEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 8, 3, stride=2, padding=1), nn.ReLU(),
+            nn.Conv2d(8, 8, 3, stride=2, padding=1), nn.ReLU(),
+            nn.Conv2d(8, 16, 3, stride=2, padding=1), nn.ReLU(),
+            nn.Conv2d(16, 16, 3, stride=2, padding=1), nn.ReLU()
+        )
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(16, 16, 3, stride=2, output_padding=1, padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(16, 8, 3, stride=2, output_padding=1, padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(8, 8, 3, stride=2, output_padding=1, padding=1), nn.ReLU(),
+            nn.ConvTranspose2d(8, 1, 3, stride=2, output_padding=1, padding=1), nn.Tanh(),
+        )
+
+    def forward(self, x):
+        return self.decoder(self.encoder(x))
+
+
+class MLPAutoEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(32 * 32, 256),
+            nn.ReLU(),
+            nn.Linear(256, 64),
+            nn.ReLU(),
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(64, 256),
+            nn.ReLU(),
+            nn.Linear(256, 32 * 32),
+            nn.Tanh()
+        )
+
+    def forward(self, x):
+        return self.decoder(self.encoder(x).view(x.size(0), -1)).view(x.size(0), 1, 32, 32)

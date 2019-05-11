@@ -56,7 +56,9 @@ def train_gan(args):
         with torch.no_grad():
             return generator(*get_z())
 
-    fixed_z = get_z()[0][:8 * 8]
+    fixed_z = get_z()
+    fixed_z_y = fixed_z[1][:8 * 8]
+    fixed_z = fixed_z[0][:8 * 8]
     for idx in range(args['iterations']):
         current_d_losses = []
         for d_step in range(args['d_steps']):
@@ -100,7 +102,7 @@ def train_gan(args):
             torch.save({'g': generator.state_dict(), 'd': discriminator.state_dict()}, '{}.pth'.format(idx))
             if args['tensorboard']:
                 with torch.no_grad():
-                    writer.add_image('Fixed', vutils.make_grid(generator(fixed_z), range=(-1.0, 1.0), nrow=8), idx)
+                    writer.add_image('Fixed', vutils.make_grid(generator(fixed_z, fixed_z_y), range=(-1.0, 1.0), nrow=8), idx)
             if args['moving_average']:
                 load_params(original_g_params, generator)
         if args['verbose'] and idx % 25 == 0:
