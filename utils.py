@@ -73,27 +73,24 @@ def num_params(net):
     return sum([np.prod(p.size()) for p in model_parameters])
 
 
-def setup_run(deterministic=False):
-    if deterministic:
-        manual_seed = 999
-        random.seed(manual_seed)
-        torch.manual_seed(manual_seed)
-        np.random.seed(manual_seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed(manual_seed)
-            torch.backends.cudnn.benchmark = False
-            torch.backends.cudnn.deterministic = True
-    else:
-        if torch.cuda.is_available():
-            torch.backends.cudnn.benchmark = True
+def setup_run(deterministic=False, given_seed=None):
+    manual_seed = random.randint(0, 1023) if given_seed is None else given_seed
+    random.seed(manual_seed)
+    torch.manual_seed(manual_seed)
+    np.random.seed(manual_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(manual_seed)
+        torch.backends.cudnn.benchmark = not deterministic
+        torch.backends.cudnn.deterministic = deterministic
+    return manual_seed
 
 
 def load_model(model_path):
     return torch.load(model_path, map_location='cpu')
 
 
-def get_mnist_ds(size=64):
-    return MNIST('~/.torch/data/', train=True, download=True, transform=transforms.Compose(
+def get_mnist_ds(size=64, train=True):
+    return MNIST('~/.torch/data/', train=train, download=True, transform=transforms.Compose(
         [transforms.Resize((size, size)), transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]))
 
 

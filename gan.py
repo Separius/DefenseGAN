@@ -5,6 +5,7 @@ from torch.optim import Adam, SGD
 import torchvision.utils as vutils
 from argparse import ArgumentParser
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
 from fid import prepare_inception_metrics
@@ -28,18 +29,18 @@ def reconstruct(gen, x, args):
 
 
 def train_gan(args):
+    args['seed'] = setup_run(args['deterministic'])
     if args['verbose']:
         print(args)
-    setup_run(args['deterministic'])
     if args['tensorboard']:
-        writer = SummaryWriter(args['exp_name'] if args['exp_name'] != '' else None)
-    common_nn_args = dict(rgb_channels=1, dim=args['model_dim'], apply_sn=not args['no_spectral_norm'])
+        writer = SummaryWriter(args['experiment_name'] if args['experiment_name'] != '' else None)
+    common_nn_args = dict(rgb_channels=1, dim=args['model_dim'])
     if args['dcgan']:
         generator, discriminator = DCGenerator, DCDiscriminator
     else:
         generator, discriminator = ResNetGenerator, ResNetDiscriminator
-    generator = to(generator(**common_nn_args, z_dim=args['z_dim']))
-    discriminator = to(discriminator(**common_nn_args, apply_bn=args['bn_in_d']))
+    generator = to(generator(**common_nn_args, z_dim=args['z_dim'], apply_sn=False))
+    discriminator = to(discriminator(**common_nn_args, apply_bn=args['bn_in_d'], apply_sn=not args['no_spectral_norm']))
     if args['verbose']:
         print('generator\'s num params:', num_params(generator))
         print('discriminator\'s num params:', num_params(discriminator))
@@ -49,6 +50,10 @@ def train_gan(args):
     betas = (0.5, 0.999) if args['dcgan'] else (0.0, 0.9)
     g_optim = Adam(trainable_params(generator), lr=lr, betas=betas)
     d_optim = Adam(trainable_params(discriminator), lr=lr * (4 if args['ttur'] else 1), betas=betas)
+    # g_lr_scheduler = LambdaLR(g_optim, lambda epoch: 1 if epoch < 1500 else 0.0001)
+    # d_lr_scheduler = LambdaLR(d_optim, lambda epoch: 1 if epoch < 1500 else 0.0001)
+    g_lr_scheduler = LambdaLR(g_optim, lambda epoch: 1)
+    d_lr_scheduler = LambdaLR(d_optim, lambda epoch: 1)
     train_loader = DataLoader(get_mnist_ds(64 if args['dcgan'] else 32), batch_size=args['batch_size'],
                               shuffle=True, drop_last=True)
     train_sampler = iter(infinite_sampler(train_loader))
@@ -121,12 +126,10 @@ def train_gan(args):
                     writer.add_image('Fixed', vutils.make_grid(generator(fixed_z), range=(-1.0, 1.0), nrow=8), idx)
             if args['moving_average']:
                 load_params(original_g_params, generator)
-        if args['verbose']:
+        if args['verbose'] and idx % 25 == 0:
             print(idx, 'g', g_losses[-1], 'd', d_losses[-1])
-        # reverse, reverse as attack detector, fine-tune discriminator,
-        # disc as attack detector, multi-gen reverse, vanilla multi autoencoder
-        # train classifier, attacks!() + attack samples + reverse samples + adv training
-        # easy defences(binary, jpeg, mean, median)
+        g_lr_scheduler.step()
+        d_lr_scheduler.step()
     if args['tensorboard']:
         writer.close()
     elif args['verbose']:
@@ -154,34 +157,34 @@ def train_gan(args):
 def parse_args(args):
     parser = ArgumentParser()
     parser.add_argument('--deterministic', action='store_true')
-    parser.add_argument('--bn_in_d', action='store_true')
+    parser.add_argument('--bn_in_d', action='store_true',
+                        help='whether to apply batch normalization in the discriminator of DCGAN or not')
     parser.add_argument('--no_fid', action='store_true')
     parser.add_argument('--verbose', action='store_true')
-    parser.add_argument('--dcgan', action='store_true')
+    parser.add_argument('--dcgan', action='store_true', help='use DCGAN or SNGAN')
     parser.add_argument('--z_dim', default=100, type=int)
-    parser.add_argument('--exp_name', default='', type=str)
+    parser.add_argument('--experiment_name', default='', type=str)
     parser.add_argument('--model_dim', default=64, type=int)
-    parser.add_argument('--no_spectral_norm', action='store_true')
+    parser.add_argument('--no_spectral_norm', action='store_true', help='do not use sepctral norm in the discriminator')
     parser.add_argument('--ttur', action='store_true')
     parser.add_argument('--batch_size', default=128, type=int)
-    parser.add_argument('--d_steps', default=1, type=int)
+    parser.add_argument('--d_steps', default=2, type=int)
     parser.add_argument('--g_steps', default=1, type=int)
     parser.add_argument('--loss', choices=['hinge', 'rsgan', 'rasgan', 'rahinge', 'wgan_gp', 'vanilla'],
-                        default='vanilla')
+                        default='hinge')
     parser.add_argument('--grad_lambda', default=0.0, type=float)  # used to be 10.0
     parser.add_argument('--iwass_drift_epsilon', default=0.001, type=float)
     parser.add_argument('--iwass_target', default=1.0, type=float)
     parser.add_argument('--z_distribution', choices=['normal', 'bernoulli', 'censored', 'uniform'], default='normal')
-    parser.add_argument('--iterations', default=5000, type=int)
+    parser.add_argument('--iterations', default=4501, type=int)
     parser.add_argument('--eval_freq', default=250, type=int)
-    parser.add_argument('--recon_restarts', default=0, type=int)
+    parser.add_argument('--recon_restarts', default=0, type=int, help='set to zero to disable')
     parser.add_argument('--recon_iters', default=200, type=int)
     parser.add_argument('--recon_step_size', default=0.01, type=float)
-    parser.add_argument('--moving_average', action='store_true')
+    parser.add_argument('--moving_average', action='store_true', help='use a moving average of G for evaluation')
     parser.add_argument('--tensorboard', action='store_true')
     return vars(parser.parse_args(args))
 
 
 if __name__ == '__main__':
-    train_gan(parse_args(args='--deterministic --bn_in_d --verbose --dcgan --no_spectral_norm '
-                              '--iterations 2000 --eval_freq 250 --moving_average --tensorboard'.split()))
+    train_gan(parse_args(args='--verbose --eval_freq 250 --moving_average --tensorboard'.split()))

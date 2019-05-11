@@ -260,7 +260,7 @@ def prepare_inception_metrics(size):
     # Load network
     net = load_inception_net()
 
-    def get_inception_metrics(sample_fn, num_inception_images=20000, use_torch=True):
+    def get_inception_metrics(sample_fn, num_inception_images=4096, use_torch=True):
         pool = accumulate_inception_activations(sample_fn, net, num_inception_images)
         if use_torch:
             mu, sigma = torch.mean(pool, 0), torch_cov(pool, rowvar=False)
