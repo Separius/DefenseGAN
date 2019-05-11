@@ -10,7 +10,7 @@ from torch.nn import Parameter as P
 from torch.utils.data import DataLoader
 from torchvision.models.inception import inception_v3
 
-from utils import to, get_mnist_ds
+from utils import to, get_mnist_ds, setup_run
 
 
 # Module that wraps the inception network to return pooled features
@@ -278,5 +278,6 @@ def prepare_inception_metrics(size):
 
 
 if __name__ == '__main__':
+    setup_run()
     calc_inception_moments(32)
     calc_inception_moments(64)

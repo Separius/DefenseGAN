@@ -1,11 +1,10 @@
 import torch
 import numpy as np
+from torch.optim import Adam
 import matplotlib.pyplot as plt
-from torch.optim import Adam, SGD
 import torchvision.utils as vutils
 from argparse import ArgumentParser
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
 from fid import prepare_inception_metrics
@@ -15,30 +14,15 @@ from utils import (infinite_sampler, random_latents, flatten_params, update_flat
                    to, num_params, trainable_params, get_mnist_ds, setup_run, load_params)
 
 
-def reconstruct(gen, x, recon_restarts=8, recon_iters=250, recon_step_size=0.5, z_distribution='normal'):
-    batch_size = x.size(0)
-    z = to(random_latents(batch_size * recon_restarts, gen.z_dim, z_distribution))
-    z = torch.nn.Parameter(z, requires_grad=True)
-    optim = SGD([z], recon_step_size)
-    x = x.repeat_interleave(recon_restarts, dim=0)
-    for _ in range(recon_iters):
-        fake = gen(z)
-        loss = ((x - fake) ** 2).mean(dim=[1, 2, 3])
-        optim.zero_grad()
-        loss.mean().backward()
-        optim.step()
-    fake.detach_()
-    return torch.stack([fake[i * recon_restarts + loss[i * recon_restarts:(i + 1) * recon_restarts].argmin().item()]
-                        for i in range(batch_size)], dim=0)
-
-
 def train_gan(args):
     args['seed'] = setup_run(args['deterministic'])
+    if args['cond']:
+        assert args['grad_lambda'] == 0
     if args['verbose']:
         print(args)
     if args['tensorboard']:
         writer = SummaryWriter(args['experiment_name'] if args['experiment_name'] != '' else None)
-    common_nn_args = dict(rgb_channels=1, dim=args['model_dim'])
+    common_nn_args = dict(rgb_channels=1, dim=args['model_dim'], num_classes=10 if args['cond'] else -1)
     if args['dcgan']:
         generator, discriminator = DCGenerator, DCDiscriminator
     else:
@@ -54,10 +38,6 @@ def train_gan(args):
     betas = (0.5, 0.999) if args['dcgan'] else (0.0, 0.9)
     g_optim = Adam(trainable_params(generator), lr=lr, betas=betas)
     d_optim = Adam(trainable_params(discriminator), lr=lr * (4 if args['ttur'] else 1), betas=betas)
-    # g_lr_scheduler = LambdaLR(g_optim, lambda epoch: 1 if epoch < 1500 else 0.0001)
-    # d_lr_scheduler = LambdaLR(d_optim, lambda epoch: 1 if epoch < 1500 else 0.0001)
-    g_lr_scheduler = LambdaLR(g_optim, lambda epoch: 1)
-    d_lr_scheduler = LambdaLR(d_optim, lambda epoch: 1)
     train_loader = DataLoader(get_mnist_ds(64 if args['dcgan'] else 32), batch_size=args['batch_size'],
                               shuffle=True, drop_last=True)
     train_sampler = iter(infinite_sampler(train_loader))
@@ -69,20 +49,20 @@ def train_gan(args):
     d_losses = []
 
     def get_z():
-        return to(random_latents(args['batch_size'], args['z_dim'], args['z_distribution']))
+        return to(random_latents(args['batch_size'], args['z_dim'], args['z_distribution'])), \
+               to(torch.randint(10, (args['batch_size'],)))
 
     def sample_generator():
         with torch.no_grad():
-            return generator(get_z())
+            return generator(*get_z())
 
-    fixed_z = get_z()[:8 * 8]
+    fixed_z = get_z()[0][:8 * 8]
     for idx in range(args['iterations']):
         current_d_losses = []
         for d_step in range(args['d_steps']):
-            real, _ = next(train_sampler)
-            real = to(real)
-            z = get_z()
-            d_loss, fake = discriminator_loss(discriminator, generator, real, z, args['loss'],
+            real, y_real = to(next(train_sampler))
+            z, y_z = get_z()
+            d_loss, fake = discriminator_loss(discriminator, generator, real, y_real, z, y_z, args['loss'],
                                               d_step == (args['d_steps'] - 1), args['iwass_drift_epsilon'],
                                               args['grad_lambda'], args['iwass_target'])
             d_optim.zero_grad()
@@ -95,10 +75,9 @@ def train_gan(args):
         current_g_losses = []
         for g_step in range(args['g_steps']):
             if g_step != 0:
-                real, _ = next(train_sampler)
-                real = to(real)
-                z = get_z()
-            g_loss = generator_loss(discriminator, generator, real, z, args['loss'], g_step == 0, fake)
+                real, y_real = to(next(train_sampler))
+                z, y_z = get_z()
+            g_loss = generator_loss(discriminator, generator, real, y_real, z, y_z, args['loss'], g_step == 0, fake)
             g_optim.zero_grad()
             g_loss.backward()
             g_optim.step()
@@ -126,8 +105,6 @@ def train_gan(args):
                 load_params(original_g_params, generator)
         if args['verbose'] and idx % 25 == 0:
             print(idx, 'g', g_losses[-1], 'd', d_losses[-1])
-        g_lr_scheduler.step()
-        d_lr_scheduler.step()
     if args['tensorboard']:
         writer.close()
     elif args['verbose']:
@@ -158,6 +135,7 @@ def parse_args(args):
     parser.add_argument('--bn_in_d', action='store_true',
                         help='whether to apply batch normalization in the discriminator of DCGAN or not')
     parser.add_argument('--no_fid', action='store_true')
+    parser.add_argument('--cond', action='store_true', help='train a conditional gan(only works with SNGAN)')
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--dcgan', action='store_true', help='use DCGAN or SNGAN')
     parser.add_argument('--z_dim', default=100, type=int)

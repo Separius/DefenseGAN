@@ -36,18 +36,18 @@ def calc_grad(x_hat, pred_hat):
                 create_graph=True, retain_graph=True, only_inputs=True)[0]
 
 
-def generator_loss(dis, gen, real, z, loss_type: str, use_fake, given_fake):
+def generator_loss(dis, gen, real, y_real, z, y_z, loss_type: str, use_fake, given_fake):
     if use_fake:
         g_ = given_fake
     else:
-        g_ = gen(z)
-    d_fake = dis(g_)
+        g_ = gen(z, y_z)
+    d_fake = dis(g_, y_z)
     if loss_type in {'hinge', 'wgan_gp'}:
         return -d_fake.mean()
     elif loss_type == 'vanilla':
         return bce(d_fake, get_one(d_fake))
     with torch.no_grad():
-        d_real = dis(real)
+        d_real = dis(real, y_real)
     if loss_type == 'rsgan':
         return bce(d_fake - d_real, get_one(d_fake))
     elif loss_type == 'rasgan':
@@ -58,16 +58,16 @@ def generator_loss(dis, gen, real, z, loss_type: str, use_fake, given_fake):
         raise ValueError('Invalid loss type')
 
 
-def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real, z, loss_type: str, return_fake,
+def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real, y_real, z, y_z, loss_type: str, return_fake,
                        iwass_drift_epsilon: float, grad_lambda: float, iwass_target: float):
-    d_real = dis(real)
+    d_real = dis(real, y_real)
     if not return_fake:
         with torch.no_grad():
-            g_ = gen(z)
-        d_fake = dis(g_)
+            g_ = gen(z, y_z)
+        d_fake = dis(g_, y_z)
     else:
-        g_ = gen(z)
-        d_fake = dis(g_.detach())
+        g_ = gen(z, y_z)
+        d_fake = dis(g_.detach(), y_z)
     if loss_type == 'hinge':
         d_loss = F.relu(1.0 - d_real).mean() + F.relu(1.0 + d_fake).mean()
     elif loss_type == 'rsgan':
@@ -85,7 +85,7 @@ def discriminator_loss(dis: torch.nn.Module, gen: torch.nn.Module, real, z, loss
     if grad_lambda != 0:
         alpha = get_mixing_factor(real)
         x_hat = Variable(alpha * real.data + (1.0 - alpha) * g_.data, requires_grad=True)
-        g = calc_grad(x_hat, dis(x_hat)).view(x_hat.size(0), -1)
+        g = calc_grad(x_hat, dis(x_hat, y_real)).view(x_hat.size(0), -1)  # THIS IS WRONG for the conditional mode
         gp = g.norm(p=2, dim=1) - iwass_target
         gp_loss = (gp ** 2).mean() * grad_lambda / (iwass_target ** 2)
         d_loss = d_loss + gp_loss

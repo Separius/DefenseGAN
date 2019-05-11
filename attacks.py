@@ -559,7 +559,7 @@ class L2Adversary:
 
 
 def main():
-    setup_run()
+    setup_run(given_seed=1235)
     test_data_loader_all = torch.utils.data.DataLoader(get_mnist_ds(32, False), batch_size=32, shuffle=True)
     xs, ys = [], []
     for i, (x, y) in enumerate(test_data_loader_all):
