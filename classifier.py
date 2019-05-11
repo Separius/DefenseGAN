@@ -1,3 +1,4 @@
+# borrowed from https://github.com/pytorch/examples/blob/master/mnist/main.py
 import torch
 import argparse
 import torch.nn as nn
@@ -13,12 +14,11 @@ class Net(nn.Module):
         self.cnn = nn.Sequential(nn.Conv2d(1, 16, 5), nn.ReLU(), nn.MaxPool2d(2),
                                  nn.Conv2d(16, 32, 5), nn.ReLU(), nn.MaxPool2d(2),
                                  nn.Conv2d(32, 64, 3), nn.ReLU())
-        self.fc = nn.Sequential(nn.Linear(3 * 3 * 64, 256), nn.ReLU(), nn.Linear(256, 10))
+        self.fc = nn.Sequential(nn.Linear(3 * 3 * 64, 128), nn.ReLU(), nn.Linear(128, 10))
 
     def forward(self, x):
         x = self.cnn(x)
-        x = x.view(x.size(0), -1)
-        return self.fc(x)
+        return self.fc(x.view(x.size(0), -1))
 
 
 def train(args, model, device, train_loader, optimizer, epoch):
@@ -53,6 +53,7 @@ def test(args, model, device, test_loader):
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
+    return correct
 
 
 def main():
@@ -74,8 +75,6 @@ def main():
                         help='random seed (default: 1)')
     parser.add_argument('--log-interval', type=int, default=10, metavar='N',
                         help='how many batches to wait before logging training status')
-    parser.add_argument('--save-model', action='store_true', default=False,
-                        help='For Saving the current Model')
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -87,17 +86,18 @@ def main():
     train_loader = torch.utils.data.DataLoader(
         get_mnist_ds(32, True), batch_size=args.batch_size, shuffle=True, **kwargs)
     test_loader = torch.utils.data.DataLoader(
-        get_mnist_ds(32, False), batch_size=args.test_batch_size, shuffle=True, **kwargs)
+        get_mnist_ds(32, False), batch_size=args.test_batch_size, shuffle=False, **kwargs)
 
     model = Net().to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
 
+    best_num_correct = -1
     for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch)
-        test(args, model, device, test_loader)
-
-    if args.save_model:
-        torch.save(model.state_dict(), "mnist_cnn.pt")
+        correct = test(args, model, device, test_loader)
+        if correct > best_num_correct:
+            best_num_correct = correct
+            torch.save(model.state_dict(), "./trained_models/mnist_cnn.pt")
 
 
 if __name__ == '__main__':
