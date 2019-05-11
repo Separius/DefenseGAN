@@ -1,24 +1,11 @@
 # borrowed from https://github.com/pytorch/examples/blob/master/mnist/main.py
 import torch
 import argparse
-import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
 from utils import get_mnist_ds
-
-
-class Net(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.cnn = nn.Sequential(nn.Conv2d(1, 16, 5), nn.ReLU(), nn.MaxPool2d(2),
-                                 nn.Conv2d(16, 32, 5), nn.ReLU(), nn.MaxPool2d(2),
-                                 nn.Conv2d(32, 64, 3), nn.ReLU())
-        self.fc = nn.Sequential(nn.Linear(3 * 3 * 64, 128), nn.ReLU(), nn.Linear(128, 10))
-
-    def forward(self, x):
-        x = self.cnn(x)
-        return self.fc(x.view(x.size(0), -1))
+from modules import CNNClassifier
 
 
 def train(args, model, device, train_loader, optimizer, epoch):
@@ -88,7 +75,7 @@ def main():
     test_loader = torch.utils.data.DataLoader(
         get_mnist_ds(32, False), batch_size=args.test_batch_size, shuffle=False, **kwargs)
 
-    model = Net().to(device)
+    model = CNNClassifier().to(device)
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
 
     best_num_correct = -1

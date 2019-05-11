@@ -182,3 +182,16 @@ class DCDiscriminator(nn.Module):
 
     def forward(self, x):
         return self.model(x).squeeze()
+
+
+class CNNClassifier(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.cnn = nn.Sequential(nn.Conv2d(1, 16, 5), nn.ReLU(), nn.MaxPool2d(2),
+                                 nn.Conv2d(16, 32, 5), nn.ReLU(), nn.MaxPool2d(2),
+                                 nn.Conv2d(32, 64, 3), nn.ReLU())
+        self.fc = nn.Sequential(nn.Linear(3 * 3 * 64, 128), nn.ReLU(), nn.Linear(128, 10))
+
+    def forward(self, x):
+        x = self.cnn(x)
+        return self.fc(x.view(x.size(0), -1))
