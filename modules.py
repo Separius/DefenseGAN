@@ -115,6 +115,7 @@ class DCGenerator(nn.Module):
     def __init__(self, z_dim=100, rgb_channels=1, dim=64, apply_sn=False):
         super().__init__()
         self.apply_sn = apply_sn
+        self.z_dim = z_dim
         self.model = nn.Sequential(
             # input is Z, going into a convolution
             *self.get_conv(z_dim, dim * 8, 1, 0),
