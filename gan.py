@@ -17,7 +17,7 @@ from utils import (infinite_sampler, random_latents, flatten_params, update_flat
 def train_gan(args):
     args['seed'] = setup_run(args['deterministic'])
     if args['cond']:
-        assert args['grad_lambda'] == 0
+        assert args['grad_lambda'] == 0 and not args['dcgan']
     if args['verbose']:
         print(args)
     if args['tensorboard']:
@@ -34,15 +34,20 @@ def train_gan(args):
         print('discriminator\'s num params:', num_params(discriminator))
     generator.train()
     discriminator.train()
-    lr = 0.0002 if args['dcgan'] else 0.001
-    betas = (0.5, 0.999) if args['dcgan'] else (0.0, 0.9)
+    if args['lr'] == 0.0:
+        lr = 0.0002 if args['dcgan'] else 0.001
+    else:
+        lr = args['lr']
+    if args['betas'] == '-1':
+        betas = (0.5, 0.999) if args['dcgan'] else (0.0, 0.9)
+    else:
+        betas = (0.5, 0.999) if args['betas'] == '1' else (0.0, 0.9)
     g_optim = Adam(trainable_params(generator), lr=lr, betas=betas)
-    d_optim = Adam(trainable_params(discriminator), lr=lr * (4 if args['ttur'] else 1), betas=betas)
+    d_optim = Adam(trainable_params(discriminator), lr=lr * (2 if args['ttur'] else 1), betas=betas)
     train_loader = DataLoader(get_mnist_ds(64 if args['dcgan'] else 32), batch_size=args['batch_size'],
                               shuffle=True, drop_last=True)
     train_sampler = iter(infinite_sampler(train_loader))
-    if args['moving_average']:
-        smoothed_g_params = flatten_params(generator)
+    smoothed_g_params = None
     if not args['no_fid']:
         fid_calculator = prepare_inception_metrics(64 if args['dcgan'] else 32)
     g_losses = []
@@ -87,10 +92,13 @@ def train_gan(args):
         g_losses.append(sum(current_g_losses) / len(current_g_losses))
         if args['tensorboard']:
             writer.add_scalar('generator_loss', g_losses[-1], idx)
-        if args['moving_average']:
-            update_flattened(generator, smoothed_g_params)
+        if args['moving_average'] and idx >= 500:
+            if smoothed_g_params is None:
+                smoothed_g_params = flatten_params(generator)
+            else:
+                update_flattened(generator, smoothed_g_params)
         if idx % args['eval_freq'] == 0:
-            if args['moving_average']:
+            if args['moving_average'] and smoothed_g_params is not None:
                 original_g_params = flatten_params(generator)
                 load_params(smoothed_g_params, generator)
             if not args['no_fid']:
@@ -99,11 +107,12 @@ def train_gan(args):
                     writer.add_scalar('FID', fid, idx)
                 if args['verbose']:
                     print(idx, 'fid', fid)
-            torch.save({'g': generator.state_dict(), 'd': discriminator.state_dict()}, '{}.pth'.format(idx))
+            torch.save(generator.state_dict(), '{}.pth'.format(idx))
             if args['tensorboard']:
                 with torch.no_grad():
-                    writer.add_image('Fixed', vutils.make_grid(generator(fixed_z, fixed_z_y), range=(-1.0, 1.0), nrow=8), idx)
-            if args['moving_average']:
+                    writer.add_image('Fixed',
+                                     vutils.make_grid(generator(fixed_z, fixed_z_y), range=(-1.0, 1.0), nrow=8), idx)
+            if args['moving_average'] and smoothed_g_params is not None:
                 load_params(original_g_params, generator)
         if args['verbose'] and idx % 25 == 0:
             print(idx, 'g', g_losses[-1], 'd', d_losses[-1])
@@ -140,13 +149,9 @@ def parse_args(args):
     parser.add_argument('--cond', action='store_true', help='train a conditional gan(only works with SNGAN)')
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--dcgan', action='store_true', help='use DCGAN or SNGAN')
-    parser.add_argument('--z_dim', default=100, type=int)
     parser.add_argument('--experiment_name', default='', type=str)
-    parser.add_argument('--model_dim', default=64, type=int)
     parser.add_argument('--no_spectral_norm', action='store_true', help='do not use sepctral norm in the discriminator')
     parser.add_argument('--ttur', action='store_true')
-    parser.add_argument('--batch_size', default=128, type=int)
-    parser.add_argument('--d_steps', default=2, type=int)
     parser.add_argument('--g_steps', default=1, type=int)
     parser.add_argument('--loss', choices=['hinge', 'rsgan', 'rasgan', 'rahinge', 'wgan_gp', 'vanilla'],
                         default='hinge')
@@ -154,13 +159,20 @@ def parse_args(args):
     parser.add_argument('--iwass_drift_epsilon', default=0.001, type=float)
     parser.add_argument('--iwass_target', default=1.0, type=float)
     parser.add_argument('--z_distribution', choices=['normal', 'bernoulli', 'censored', 'uniform'], default='normal')
-    parser.add_argument('--iterations', default=4501, type=int)
+    parser.add_argument('--iterations', default=5001, type=int)
     parser.add_argument('--eval_freq', default=250, type=int)
-    parser.add_argument('--moving_average', action='store_true', help='use a moving average of G for evaluation')
     parser.add_argument('--tensorboard', action='store_true')
+
+    parser.add_argument('--z_dim', default=100, type=int)
+    parser.add_argument('--model_dim', default=64, type=int)
+    parser.add_argument('--batch_size', default=128, type=int)
+    parser.add_argument('--d_steps', default=2, type=int)
+    parser.add_argument('--moving_average', action='store_true', help='use a moving average of G for evaluation')
+    parser.add_argument('--lr', default=0.0, type=float, help='learning rate, 0.0 for default')
+    parser.add_argument('--betas', choices=['-1', '0', '1'], default='-1')
     return vars(parser.parse_args(args))
 
 
 if __name__ == '__main__':
-    best_args = '--verbose --eval_freq 250 --moving_average --tensorboard'.split()
+    best_args = '--verbose --moving_average --tensorboard'.split()
     train_gan(parse_args(args=best_args))
