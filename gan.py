@@ -16,16 +16,21 @@ from utils import (infinite_sampler, random_latents, flatten_params, update_flat
 
 
 def reconstruct(gen, x, args):
-    z = to(random_latents(x.size(0) * args['recon_restarts'], args['z_dim'], args['z_distribution']))
+    batch_size = x.size(0)
+    z = to(random_latents(batch_size * args['recon_restarts'], args['z_dim'], args['z_distribution']))
     z = torch.nn.Parameter(z, requires_grad=True)
     optim = SGD([z], args['recon_step_size'])
-    x = x.repeat(args['recon_restarts'], 1, 1, 1)
+    x = x.repeat_interleave(args['recon_restarts'], dim=0)
     for _ in range(args['recon_iters']):
-        loss = ((x - gen(z)) ** 2).mean(dim=[1, 2, 3])
+        fake = gen(z)
+        loss = ((x - fake) ** 2).mean(dim=[1, 2, 3])
         optim.zero_grad()
         loss.mean().backward()
         optim.step()
-    return gen(z), loss
+    fake.detach_()
+    return torch.stack([fake[i * args['recon_restarts'] +
+                             loss[i * args['recon_restarts']:(i + 1) * args['recon_restarts']].argmin().item()]
+                        for i in range(batch_size)], dim=0)
 
 
 def train_gan(args):
@@ -119,7 +124,9 @@ def train_gan(args):
                 if args['recon_restarts'] != 0:
                     x, _ = next(train_sampler)
                     x = to(x[:8])
-                    x_r, _ = reconstruct(generator, x, args)
+                    generator.eval()
+                    x_r = reconstruct(generator, x, args)
+                    generator.train()
                     writer.add_image('Real', vutils.make_grid(x, range=(-1.0, 1.0), nrow=8), idx)
                     writer.add_image('Recon', vutils.make_grid(x_r, range=(-1.0, 1.0), nrow=8), idx)
                 with torch.no_grad():
@@ -180,7 +187,7 @@ def parse_args(args):
     parser.add_argument('--eval_freq', default=250, type=int)
     parser.add_argument('--recon_restarts', default=0, type=int, help='set to zero to disable')
     parser.add_argument('--recon_iters', default=200, type=int)
-    parser.add_argument('--recon_step_size', default=0.01, type=float)
+    parser.add_argument('--recon_step_size', default=0.5, type=float)
     parser.add_argument('--moving_average', action='store_true', help='use a moving average of G for evaluation')
     parser.add_argument('--tensorboard', action='store_true')
     return vars(parser.parse_args(args))

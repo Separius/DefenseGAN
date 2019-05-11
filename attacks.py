@@ -1,16 +1,16 @@
 import torch
 import numpy as np
-from tqdm import tqdm
 import torch.nn as nn
 import torch.optim as optim
+from tqdm import tqdm, trange
 import torch.nn.functional as F
 from torch.autograd import Variable
+from torch.utils.data import TensorDataset, DataLoader
 
 
-class AdversarialAttack:  # TODO add a save function
+class AdversarialAttack:
     def __init__(self, model):
         self.model = model.eval()
-        self.device = torch.device("cuda" if next(model.parameters()).is_cuda else "cpu")
         self.x = None
         self.y = None
 
@@ -19,9 +19,8 @@ class AdversarialAttack:  # TODO add a save function
         total = 0
         all_x_adv = []
         all_y = []
-        for i, (x, y) in enumerate(tqdm(data_loader)):
+        for i, (x, y) in enumerate(tqdm(data_loader, desc='Attack')):
             all_y.append(y)
-            x, y = x.to(self.device), y.to(self.device)
             x_adv = self._attack(x, y)
             y_adv = self.model(x_adv)
             pred = y_adv.argmax(dim=1, keepdim=True)
@@ -43,6 +42,60 @@ class AdversarialAttack:  # TODO add a save function
 class NoAttack(AdversarialAttack):
     def _attack(self, x, y):
         return x
+
+
+class BlackBoxAttack(NoAttack):
+    def __init__(self, oracle, substitute, holdout, white_box: AdversarialAttack):
+        super().__init__(oracle)
+        self.substitute = substitute
+        self.white_box = white_box
+        self.holdout = holdout
+        self.augmentation_iters = 5
+        self.epochs_per_aug = 5
+        self.batch_size = 128
+        self.lamb = 0.1
+
+    def _jacobian_augmentation(self, prev_x, prev_y):
+        bs = self.batch_size
+        prev_x.requires_grad_()
+        for i in trange(int(np.ceil(prev_x.size(0) / bs)), desc='Jacobian Augmentation'):
+            preds = self.substitute(prev_x[i * bs:(i + 1) * bs])
+            score = torch.gather(preds, 1, prev_y[i * bs:(i + 1) * bs].unsqueeze(1))
+            score.sum().backward()
+        new_x = self._clamp(prev_x + self.lamb * prev_x.grad.sign())
+        prev_x.detach_()
+        return new_x
+
+    def _train_sub(self):
+        bs = self.batch_size
+        net = self.substitute
+        optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
+        x, y = self.holdout  # assumes they are on the right device
+        for aug_iter in trange(self.augmentation_iters, desc='Augmentation Iters'):
+            net.train()
+            for epoch in trange(self.epochs_per_aug, desc='Inner Epochs'):
+                indices = np.arange(x.size(0))
+                np.random.shuffle(indices)
+                for batch in trange(int(np.ceil(len(indices) // bs)), desc='Minibatches'):
+                    x_b, y_b = x[batch * bs:(batch + 1) * bs], y[batch * bs:(batch + 1) * bs]
+                    pred = net(x_b)
+                    loss = F.cross_entropy(pred, y_b)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+            net.eval()
+            if aug_iter != self.augmentation_iters - 1:
+                new_x = self._jacobian_augmentation(x, y)
+                new_y = self.model(new_x).argmax(dim=1)  # oracle
+                x = torch.cat([x, new_x], dim=0)
+                y = torch.cat([y, new_y], dim=0)
+
+    def attack(self, data_loader):
+        self._train_sub()
+        self.white_box.model = self.substitute.eval()
+        self.white_box.attack(data_loader)
+        ds = TensorDataset(self.white_box.x, self.white_box.y)
+        return super().attack(DataLoader(ds, batch_size=self.batch_size))
 
 
 class FGSM(AdversarialAttack):
@@ -499,30 +552,42 @@ class L2Adversary:
 def main():
     from utils import get_mnist_ds
     import matplotlib.pyplot as plt
-    from modules import CNNClassifier
     import torchvision.utils as vutils
+    from modules import CNNClassifier, FCClassifier
 
     classifier = CNNClassifier()
     classifier.load_state_dict(torch.load('./trained_models/mnist_cnn.pt'))
     classifier.eval()
-    test_data_loader = torch.utils.data.DataLoader(get_mnist_ds(32, False), batch_size=32, shuffle=True)
+    test_data_loader_all = torch.utils.data.DataLoader(get_mnist_ds(32, False), batch_size=32, shuffle=True)
+    xs, ys = [], []
+    for i, (x, y) in enumerate(test_data_loader_all):
+        xs.append(x)
+        ys.append(y)
+        if i == 5:
+            holdout = (torch.cat(xs, dim=0), torch.cat(ys, dim=0))
+    test_data_loader = DataLoader(TensorDataset(torch.cat(xs, dim=0), torch.cat(ys, dim=0)), batch_size=32)
 
-    # attacker = NoAttack(classifier)
-    # print('Default.acc', attacker.attack(test_data_loader))
+    attacker = NoAttack(classifier)
+    print('Default.acc', attacker.attack(test_data_loader))
 
-    # attacker = FGSM(classifier, eps=0.3)
-    # print('FGSM.acc', attacker.attack(test_data_loader))
+    attacker = FGSM(classifier, eps=0.3)
+    print('FGSM.acc', attacker.attack(test_data_loader))
 
-    # attacker = RandFGSM(classifier, eps=0.3, alpha=0.05)
-    # print('RandFGSM.acc', attacker.attack(test_data_loader))
+    attacker = RandFGSM(classifier, eps=0.3, alpha=0.05)
+    print('RandFGSM.acc', attacker.attack(test_data_loader))
 
-    attacker = CW2(classifier)
-    print('CW2.acc', attacker.attack(test_data_loader))
+    # attacker = CW2(classifier)
+    # print('CW2.acc', attacker.attack(test_data_loader))
 
-    plt.imshow(np.transpose(vutils.make_grid(attacker.x[:32], range=(-1.0, 1.0), padding=5), (1, 2, 0)))
-    print(attacker.y[:32])
-    print(classifier(attacker.x[:32]).argmax(dim=1))
-    plt.show()
+    # plt.imshow(np.transpose(vutils.make_grid(attacker.x[:32], range=(-1.0, 1.0), padding=5), (1, 2, 0)))
+    # print(attacker.y[:32])
+    # print(classifier(attacker.x[:32]).argmax(dim=1))
+    # plt.show()
+
+    sub = CNNClassifier()
+    white_attacker = FGSM(sub, eps=0.3)
+    black_attacker = BlackBoxAttack(classifier, sub, holdout, white_attacker)
+    print('BlackBox+FGSM.acc', black_attacker.attack(test_data_loader))
 
 
 if __name__ == '__main__':

@@ -195,3 +195,15 @@ class CNNClassifier(nn.Module):
     def forward(self, x):
         x = self.cnn(x)
         return self.fc(x.view(x.size(0), -1))
+
+
+class FCClassifier(nn.Module):
+    def __init__(self):
+        super().__init__()
+        input_size = 32 * 32
+        self.fc = nn.Sequential(nn.Linear(input_size, 512), nn.ReLU(), nn.BatchNorm1d(512),
+                                nn.Linear(512, 128), nn.ReLU(), nn.BatchNorm1d(128),
+                                nn.Linear(128, 10))
+
+    def forward(self, x):
+        return self.fc(x.view(x.size(0), -1))
