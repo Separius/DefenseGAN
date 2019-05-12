@@ -70,7 +70,7 @@ def main():
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
-    parser.add_argument('--log-interval', type=int, default=10, metavar='N',
+    parser.add_argument('--log-interval', type=int, default=1000, metavar='N',
                         help='how many batches to wait before logging training status')
     parser.add_argument('--mlp', action='store_true')
     parser.add_argument('--adv', action='store_true', help='adversarial training')
@@ -92,6 +92,7 @@ def main():
             best_num_correct = correct
             torch.save(model.state_dict(), './trained_models/mnist_{}{}.pt'
                        .format('mlp' if args.mlp else 'cnn', '_adv' if args.adv else ''))
+    print('best:', best_num_correct)
 
 
 if __name__ == '__main__':

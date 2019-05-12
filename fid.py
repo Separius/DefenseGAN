@@ -210,10 +210,10 @@ def torch_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
 
     diff = mu1 - mu2
     # Run 50 itrs of newton-schulz to get the matrix sqrt of sigma1 dot sigma2
-    covmean = sqrt_newton_schulz(to(sigma1).mm(to(sigma2)).unsqueeze(0), 50).squeeze().cpu()
+    covmean = sqrt_newton_schulz(sigma1.mm(sigma2).unsqueeze(0), 50).squeeze()
     out = (diff.dot(diff) + torch.trace(sigma1) + torch.trace(sigma2)
            - 2 * torch.trace(covmean))
-    return out
+    return out.item()
 
 
 # Loop and run the sampler and the net until it accumulates num_inception_images
@@ -264,8 +264,8 @@ def prepare_inception_metrics(size):
         pool = accumulate_inception_activations(sample_fn, net, num_inception_images)
         mu, sigma = torch.mean(pool, 0), torch_cov(pool, rowvar=False)
         if use_torch:
-            FID = torch_calculate_frechet_distance(mu, sigma, torch.from_numpy(data_mu),
-                                                   torch.from_numpy(data_sigma)).item()
+            FID = torch_calculate_frechet_distance(to(mu), to(sigma), to(torch.from_numpy(data_mu)),
+                                                   to(torch.from_numpy(data_sigma)))
         if not use_torch or FID != FID:  # nan
             FID = numpy_calculate_frechet_distance(mu.numpy(), sigma.numpy(), data_mu, data_sigma)
         # Delete mu, sigma, pool, just in case

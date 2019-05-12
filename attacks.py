@@ -1,3 +1,4 @@
+import os
 import torch
 import numpy as np
 import torch.nn as nn
@@ -14,10 +15,11 @@ from utils import get_mnist_ds, mkdir, to, setup_run
 
 
 class AdversarialAttack:
-    def __init__(self, model):
+    def __init__(self, model, name):
         self.model = model.eval()
         self.x = None
         self.y = None
+        self.name = name
 
     def attack(self, data_loader):
         correct = 0
@@ -44,8 +46,8 @@ class AdversarialAttack:
     def _attack(self, x, y):
         raise NotImplementedError()
 
-    def save(self, file_loc):
-        torch.save({'x': self.x.cpu().detach(), 'y': self.y.cpu().detach()}, file_loc)
+    def save(self, save_dir):
+        torch.save({'x': self.x.cpu().detach(), 'y': self.y.cpu().detach()}, os.path.join(save_dir, self.name + '.pth'))
 
 
 class NoAttack(AdversarialAttack):
@@ -54,8 +56,8 @@ class NoAttack(AdversarialAttack):
 
 
 class BlackBoxAttack(NoAttack):
-    def __init__(self, oracle, substitute, holdout, white_box: AdversarialAttack):
-        super().__init__(oracle)
+    def __init__(self, oracle, name, substitute, holdout, white_box: AdversarialAttack):
+        super().__init__(oracle, name)
         self.substitute = substitute
         self.white_box = white_box
         self.holdout = holdout
@@ -108,8 +110,8 @@ class BlackBoxAttack(NoAttack):
 
 
 class FGSM(AdversarialAttack):
-    def __init__(self, model, eps=0.3):
-        super().__init__(model)
+    def __init__(self, model, name, eps=0.3):
+        super().__init__(model, name)
         self.eps = eps
 
     def _attack(self, x, y):
@@ -123,9 +125,9 @@ class FGSM(AdversarialAttack):
 
 
 class RandFGSM(FGSM):
-    def __init__(self, model, eps=0.3, alpha=0.05):
+    def __init__(self, model, name, eps=0.3, alpha=0.05):
         assert eps > alpha
-        super().__init__(model, eps - alpha)
+        super().__init__(model, name, eps - alpha)
         self.alpha = alpha
 
     def _attack(self, x, y):
@@ -133,8 +135,8 @@ class RandFGSM(FGSM):
 
 
 class CW2(AdversarialAttack):
-    def __init__(self, model):
-        super().__init__(model)
+    def __init__(self, model, name):
+        super().__init__(model, name)
         self.l2adv = L2Adversary()
 
     def _attack(self, x, y):
@@ -567,46 +569,39 @@ def main():
         ys.append(y)
         if i == 5:
             holdout = (torch.cat(xs, dim=0), torch.cat(ys, dim=0))
-    mkdir('./saved_attacks/')
+    base_dir = './saved_attacks/'
+    mkdir(base_dir)
 
-    test_data_loader = DataLoader(TensorDataset(torch.cat(xs, dim=0), torch.cat(ys, dim=0)), batch_size=32)
+    test_data_loader = DataLoader(TensorDataset(torch.cat(xs, dim=0), torch.cat(ys, dim=0)), batch_size=64)
     for classifier_name in ['cnn', 'mlp']:
         classifier = to(CNNClassifier() if classifier_name == 'cnn' else MLPClassifier())
         classifier.load_state_dict(torch.load('./trained_models/mnist_' + classifier_name + '.pt'))
         classifier.eval()
         print('*' * 10 + classifier_name + '*' * 10)
 
-        attacker = NoAttack(classifier)
-        print('\tDefault.acc', attacker.attack(test_data_loader))
-        attacker.save('./saved_attacks/' + classifier_name + '_default.pth')
+        attackers = [
+            NoAttack(classifier, '{}_{}'.format(classifier_name, 'default')),
+            FGSM(classifier, '{}_{}'.format(classifier_name, 'fgsm_0.15'), eps=0.15),
+            FGSM(classifier, '{}_{}'.format(classifier_name, 'fgsm_0.3'), eps=0.3),
+            RandFGSM(classifier, '{}_{}'.format(classifier_name, 'rfgsm'), eps=0.3, alpha=0.05),
+            CW2(classifier, '{}_{}'.format(classifier_name, 'cw2'))
+        ]
+        for sub_name in ('cnn', 'mlp'):
+            sub = to((CNNClassifier if sub_name == 'cnn' else MLPClassifier)())
+            white_attacker = FGSM(sub, 'wb_{}'.format(sub_name), eps=0.3)
+            attacker = BlackBoxAttack(classifier, '{}_{}'.format(classifier_name, 'bb_{}'.format(sub_name)),
+                                      sub, holdout, white_attacker)
+            attackers.append(attacker)
 
-        attacker = FGSM(classifier, eps=0.3)
-        print('\tFGSM(0.3).acc', attacker.attack(test_data_loader))
-        attacker.save('./saved_attacks/' + classifier_name + '_fgsm_0.3.pth')
-
-        attacker = FGSM(classifier, eps=0.15)
-        print('\tFGSM(0.15).acc', attacker.attack(test_data_loader))
-        attacker.save('./saved_attacks/' + classifier_name + '_fgsm_0.15.pth')
-
-        attacker = RandFGSM(classifier, eps=0.3, alpha=0.05)
-        print('RandFGSM.acc', attacker.attack(test_data_loader))
-        attacker.save('./saved_attacks/' + classifier_name + '_rfgsm_0.3.pth')
-
-        attacker = CW2(classifier)
-        print('CW2.acc', attacker.attack(test_data_loader))
-        attacker.save('./saved_attacks/' + classifier_name + '_cw2.pth')
-
-        # plt.imshow(np.transpose(vutils.make_grid(attacker.x[:32], range=(-1.0, 1.0), padding=5), (1, 2, 0)))
-        # print(attacker.y[:32])
-        # print(classifier(attacker.x[:32]).argmax(dim=1))
-        # plt.show()
-
-        for sub_name, sub in zip(('cnn', 'mlp'), (CNNClassifier, MLPClassifier)):
-            sub = to(sub())
-            white_attacker = FGSM(sub, eps=0.3)
-            attacker = BlackBoxAttack(classifier, sub, holdout, white_attacker)
-            print('BlackBox+FGSM_{}.acc'.format(sub_name), attacker.attack(test_data_loader))
-            attacker.save('./saved_attacks/{}_sub_{}.pth'.format(classifier_name, sub_name))
+        plt.figure(figsize=(40, 20))
+        for idx, attacker in enumerate(attackers):
+            print('\t{}.acc'.format(attacker.name), attacker.attack(test_data_loader))
+            attacker.save(base_dir)
+            plt.subplot(4, 2, idx+1)
+            plt.axis('off')
+            plt.title(attacker.name)
+            plt.imshow(np.transpose(vutils.make_grid(attacker.x[:9], nrow=3, range=(-1.0, 1.0), padding=5), (1, 2, 0)))
+        plt.show()
 
 
 if __name__ == '__main__':

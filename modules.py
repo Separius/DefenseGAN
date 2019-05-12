@@ -250,41 +250,28 @@ class MLPClassifier(nn.Module):
         return self.fc(x.view(x.size(0), -1))
 
 
-class CNNAutoEncoder(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Conv2d(1, 8, 3, stride=2, padding=1), nn.ReLU(),
-            nn.Conv2d(8, 8, 3, stride=2, padding=1), nn.ReLU(),
-            nn.Conv2d(8, 16, 3, stride=2, padding=1), nn.ReLU(),
-            nn.Conv2d(16, 16, 3, stride=2, padding=1), nn.ReLU()
-        )
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(16, 16, 3, stride=2, output_padding=1, padding=1), nn.ReLU(),
-            nn.ConvTranspose2d(16, 8, 3, stride=2, output_padding=1, padding=1), nn.ReLU(),
-            nn.ConvTranspose2d(8, 8, 3, stride=2, output_padding=1, padding=1), nn.ReLU(),
-            nn.ConvTranspose2d(8, 1, 3, stride=2, output_padding=1, padding=1), nn.Tanh(),
-        )
-
-    def forward(self, x):
-        return self.decoder(self.encoder(x))
-
-
 class MLPAutoEncoder(nn.Module):
     def __init__(self):
         super().__init__()
         self.encoder = nn.Sequential(
-            nn.Linear(32 * 32, 256),
-            nn.ReLU(),
-            nn.Linear(256, 64),
-            nn.ReLU(),
+            nn.Linear(32 * 32, 128),
+            nn.Tanh(),
+            nn.Linear(128, 64),
+            nn.Tanh(),
+            nn.Linear(64, 12),
+            nn.Tanh(),
+            nn.Linear(12, 4),
         )
         self.decoder = nn.Sequential(
-            nn.Linear(64, 256),
-            nn.ReLU(),
-            nn.Linear(256, 32 * 32),
-            nn.Tanh()
+            nn.Linear(4, 12),
+            nn.Tanh(),
+            nn.Linear(12, 64),
+            nn.Tanh(),
+            nn.Linear(64, 128),
+            nn.Tanh(),
+            nn.Linear(128, 32 * 32),
+            nn.Sigmoid(),  # compress to a range (0, 1)
         )
 
     def forward(self, x):
-        return self.decoder(self.encoder(x).view(x.size(0), -1)).view(x.size(0), 1, 32, 32)
+        return self.decoder(self.encoder(x.view(x.size(0), -1))).view(x.size(0), 1, 32, 32)
