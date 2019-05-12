@@ -159,17 +159,16 @@ def parse_args(args):
     parser.add_argument('--iwass_drift_epsilon', default=0.001, type=float)
     parser.add_argument('--iwass_target', default=1.0, type=float)
     parser.add_argument('--z_distribution', choices=['normal', 'bernoulli', 'censored', 'uniform'], default='normal')
-    parser.add_argument('--iterations', default=5001, type=int)
+    parser.add_argument('--iterations', default=10001, type=int)
     parser.add_argument('--eval_freq', default=250, type=int)
     parser.add_argument('--tensorboard', action='store_true')
-
     parser.add_argument('--z_dim', default=100, type=int)
     parser.add_argument('--model_dim', default=64, type=int)
     parser.add_argument('--batch_size', default=128, type=int)
     parser.add_argument('--d_steps', default=2, type=int)
     parser.add_argument('--moving_average', action='store_true', help='use a moving average of G for evaluation')
     parser.add_argument('--lr', default=0.0, type=float, help='learning rate, 0.0 for default')
-    parser.add_argument('--betas', choices=['-1', '0', '1'], default='-1')
+    parser.add_argument('--betas', choices=['-1', '0', '1'], default='-1', help='internal, do not change')
     return vars(parser.parse_args(args))
 
 

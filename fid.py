@@ -210,7 +210,7 @@ def torch_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
 
     diff = mu1 - mu2
     # Run 50 itrs of newton-schulz to get the matrix sqrt of sigma1 dot sigma2
-    covmean = sqrt_newton_schulz(sigma1.mm(sigma2).unsqueeze(0), 50).squeeze()
+    covmean = sqrt_newton_schulz(to(sigma1).mm(to(sigma2)).unsqueeze(0), 50).squeeze().cpu()
     out = (diff.dot(diff) + torch.trace(sigma1) + torch.trace(sigma2)
            - 2 * torch.trace(covmean))
     return out
@@ -221,10 +221,10 @@ def torch_calculate_frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6):
 def accumulate_inception_activations(sample, net, num_inception_images=20000):
     pool = []
     current_count = 0
-    while current_count < num_inception_images:
-        with torch.no_grad():
-            pool_val = net(sample())
-            pool += [pool_val]
+    with torch.no_grad():
+        while current_count < num_inception_images:
+            pool_val = net(sample()).cpu()
+            pool.append(pool_val)
             current_count += pool_val.shape[0]
     return torch.cat(pool, 0)
 
@@ -240,11 +240,11 @@ def calc_inception_moments(size, batch_size=256):
     pool = []
     with torch.no_grad():
         for i, (x, y) in enumerate(tqdm(train_loader)):
-            pool += [net(to(x)).cpu().numpy()]
-    pool = np.concatenate(pool, 0)
+            pool.append(net(to(x)).cpu())
+        pool = torch.cat(pool, dim=0)
+        mu, sigma = torch.mean(pool, 0), torch_cov(pool, rowvar=False)
     # Prepare mu and sigma, save to disk.
-    mu, sigma = np.mean(pool, axis=0), np.cov(pool, rowvar=False)
-    np.savez('inception_moments_{}.npz'.format(size), **{'mu': mu, 'sigma': sigma})
+    np.savez('inception_moments_{}.npz'.format(size), **{'mu': mu.numpy(), 'sigma': sigma.numpy()})
     return mu, sigma
 
 
@@ -262,14 +262,12 @@ def prepare_inception_metrics(size):
 
     def get_inception_metrics(sample_fn, num_inception_images=4096, use_torch=True):
         pool = accumulate_inception_activations(sample_fn, net, num_inception_images)
+        mu, sigma = torch.mean(pool, 0), torch_cov(pool, rowvar=False)
         if use_torch:
-            mu, sigma = torch.mean(pool, 0), torch_cov(pool, rowvar=False)
-            FID = torch_calculate_frechet_distance(mu, sigma, to(torch.tensor(data_mu).float()),
-                                                   to(torch.tensor(data_sigma).float()))
-            FID = FID.cpu().item()
+            FID = torch_calculate_frechet_distance(mu, sigma, torch.from_numpy(data_mu),
+                                                   torch.from_numpy(data_sigma)).item()
         if not use_torch or FID != FID:  # nan
-            mu, sigma = np.mean(pool.cpu().numpy(), axis=0), np.cov(pool.cpu().numpy(), rowvar=False)
-            FID = numpy_calculate_frechet_distance(mu, sigma, data_mu, data_sigma)
+            FID = numpy_calculate_frechet_distance(mu.numpy(), sigma.numpy(), data_mu, data_sigma)
         # Delete mu, sigma, pool, just in case
         del mu, sigma, pool
         return FID
@@ -279,5 +277,17 @@ def prepare_inception_metrics(size):
 
 if __name__ == '__main__':
     setup_run()
-    calc_inception_moments(32)
-    calc_inception_moments(64)
+
+
+    def get_sample_fn(train):
+        dl = iter(DataLoader(get_mnist_ds(32, train), batch_size=128, shuffle=True, drop_last=False))
+
+        def sample_fn():
+            return to(next(dl)[0])
+
+        return sample_fn
+
+
+    a = prepare_inception_metrics(32)
+    print('train_fid', a(get_sample_fn(True)))
+    print('test_fid', a(get_sample_fn(False)))
